@@ -50,7 +50,7 @@ const About = () => {
         <View style={styles.logoContainer}>
           <View style={styles.logoBackground}>
             <Image 
-              source={require("../../../assets/ghost.png")} 
+              source={require("../../../assets/webttrac_logo_bgrm.png")} 
               style={styles.logo}
               resizeMode="contain"
             />

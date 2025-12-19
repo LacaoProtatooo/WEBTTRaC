@@ -145,7 +145,7 @@ const Signup = () => {
       .then((user) => {
         console.log('Signup successful:', user);
         Alert.alert(
-          'Welcome to TricycleMOD!', 
+          'Welcome to WEBT-TRaC!', 
           'Account created successfully. Please log in with your credentials.',
           [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
         );
@@ -202,7 +202,7 @@ const Signup = () => {
     >
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerContainer}>
-          <Text style={styles.logo}>TricycleMOD</Text>
+          <Text style={styles.logo}>WEBT-TRaC</Text>
           <Text style={styles.subtitle}>Create Your Account</Text>
         </View>
 

@@ -43,9 +43,9 @@ export const signup = async (req, res) => {
       password, // plain text, will be hashed by pre-save hook
       address: address || {},
       phone: phone || "",
-      role: role || "driver", // defaults to driver
+      role: 'guest',
       FCMToken: FCMToken || "",
-      isVerified: false, // set verified upon signup
+      isVerified: false,
       verificationTokenExpiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
     };
 
@@ -200,7 +200,7 @@ export const googlelogin = async (req, res) => {
         password: randomPassword,
         firebaseUid,
         address: {},
-        role: "driver",
+        role: 'guest',
         FCMToken: FCMToken || "",
         isVerified: true,
       });

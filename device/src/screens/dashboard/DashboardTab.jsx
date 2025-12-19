@@ -12,7 +12,7 @@ import { colors, spacing, fonts } from '../../components/common/theme';
 import { getUserCredentials } from '../../utils/userStorage';
 import { getToken } from '../../utils/jwtStorage';
 import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
-import defaultAvatar from '../../../assets/ghost.png';
+import defaultAvatar from '../../../assets/webttrac_logo_bgrm.png';
 import StatCard from '../../components/home/StatCard';
 import MaintenanceTracker from '../../components/home/MaintenanceTracker';
 import WeatherWidget from '../../components/home/WeatherWidget';
@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
   },
   avatar: {
     backgroundColor: colors.ivory4,
-    borderWidth: 2,
+    borderWidth: 0.5,
     borderColor: colors.primary,
   },
   // Stats Container

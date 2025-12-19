@@ -499,7 +499,7 @@ const Account = () => {
                     size={16} 
                     color={colors.orangeShade5} 
                   />
-                  <Text style={styles.roleText}>{role === 'driver' ? 'Driver' : 'Operator'}</Text>
+                  <Text style={styles.roleText}>{role}</Text>
                 </View>
               </>
             )}
@@ -693,7 +693,7 @@ const Account = () => {
                 </View>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Role:</Text>
-                  <Text style={styles.infoText}>{role === 'driver' ? 'Driver' : 'Operator'}</Text>
+                  <Text style={styles.infoText}>{role}</Text>
                 </View>
                 
                 <Divider style={styles.divider} />

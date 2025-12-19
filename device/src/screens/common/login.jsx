@@ -84,6 +84,12 @@ const Login = () => {
 
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
+      // Sign out first to force account selection (only if user is currently signed in)
+      const currentUser = await GoogleSignin.getCurrentUser();
+      if (currentUser) {
+        await GoogleSignin.signOut();
+      }
+
       // Sign in and get response
       const response = await GoogleSignin.signIn();
 
@@ -141,14 +147,14 @@ const Login = () => {
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.logoContainer}>
-        <View style={styles.logoCircle}>
+
           <Image
-            source={require('../../../assets/ghost.png')}
+            source={require('../../../assets/webttrac_logo_bgrm.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
-        </View>
-          <Text style={styles.appName}>Tricycle MOD</Text>
+       
+          <Text style={styles.appName}>WEBT-TRaC</Text>
         </View>
 
         <Text style={styles.title}>Welcome Back</Text>

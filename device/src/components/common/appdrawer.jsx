@@ -6,7 +6,7 @@ import { Avatar, Text, IconButton, Divider } from 'react-native-paper';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getUserCredentials } from '../../utils/userStorage';
-import defaultAvatar from '../../../assets/ghost.png';
+import defaultAvatar from '../../../assets/webttrac_logo_bgrm.png';
 import { colors, spacing, fonts } from './theme';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -84,7 +84,7 @@ const AppDrawer = ({ closeDrawer, navigation }) => {
                       ? { uri: user.image.url }
                       : defaultAvatar
                   }
-                  size={80}
+                  size={120}
                   style={styles.avatar}
                 />
                 <View style={styles.userTextContainer}>
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     backgroundColor: `${colors.ivory3}CC`,
   },
   userInfoSection: {
-    paddingHorizontal: spacing.medium,
+    paddingHorizontal: spacing.large,
     marginBottom: spacing.large,
   },
   avatarContainer: {
@@ -320,9 +320,9 @@ const styles = StyleSheet.create({
   },
   avatar: {
     backgroundColor: colors.ivory4,
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: colors.primary,
-    marginBottom: spacing.small,
+    marginBottom: spacing.large,
   },
   userTextContainer: {
     alignItems: 'center',

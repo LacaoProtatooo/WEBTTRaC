@@ -1,19 +1,19 @@
 {
   "expo": {
-    "name": "TricycleMOD",
+    "name": "WEBT-TRaC",
     "slug": "device",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/ghost.png",
+    "icon": "./assets/webttrac_logo_bgrm.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/ghost.png",
+      "image": "./assets/webttrac_logo_bgrm.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "extra": {
-      "BACKEND_URL": "http://192.168.254.105:5000",
+      "BACKEND_URL": "http://192.168.100.12:5000",
       "eas": {
         "projectId": "9318ce3a-b5b0-461a-98bf-1cca498a078e"
       }
@@ -32,7 +32,7 @@
         "ACCESS_BACKGROUND_LOCATION"
       ],
       "foregroundService": {
-        "notificationTitle": "TricycleMOD tracking",
+        "notificationTitle": "WEBT-TRaC tracking",
         "notificationBody": "Background location running"
       },
       "config": {
@@ -66,8 +66,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow TricycleMOD to access your camera",
-          "microphonePermission": "Allow TricycleMOD to access your microphone",
+          "cameraPermission": "Allow WEBT-TRaC to access your camera",
+          "microphonePermission": "Allow WEBT-TRaC to access your microphone",
           "recordAudioAndroid": true
         }
       ],
