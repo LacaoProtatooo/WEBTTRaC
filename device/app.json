@@ -20,7 +20,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/ghost.png",
+        "foregroundImage": "./assets/webttrac_logo_bgrm.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
