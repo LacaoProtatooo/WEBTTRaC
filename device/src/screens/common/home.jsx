@@ -16,6 +16,7 @@ import DashboardTab from '../dashboard/DashboardTab';
 import MapsTab from '../dashboard/MapsTab';
 // Profile tab removed per request
 import ChatMenu from '../message/chatMenu';
+import LostFoundScreen from './LostFoundScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -61,6 +62,16 @@ const Home = () => {
         options={{ 
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="chatbubble-ellipses-outline" size={size} color={color} />
+          ) 
+        }}
+      />
+      <Tab.Screen
+        name="LostFound"
+        component={LostFoundScreen}
+        options={{ 
+          title: 'Lost & Found',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cube-outline" size={size} color={color} />
           ) 
         }}
       />

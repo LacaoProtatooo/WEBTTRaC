@@ -244,6 +244,18 @@ const AppDrawer = ({ closeDrawer, navigation }) => {
                       closeDrawer();
                     }}
                   />
+                  <DrawerItem
+                    icon={({ focused }) => renderIcon('cube-outline', focused)}
+                    label="Lost & Found"
+                    labelStyle={styles.drawerLabel}
+                    activeBackgroundColor={`${colors.ivory4}CC`}
+                    activeTintColor={colors.primary}
+                    inactiveTintColor={colors.orangeShade8}
+                    onPress={() => {
+                      navigateSafe('LostFound');
+                      closeDrawer();
+                    }}
+                  />
                   <Divider style={styles.divider} />
                 </>
               )}

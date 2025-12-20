@@ -77,6 +77,18 @@ const userSchema = new mongoose.Schema({
         type: Number,
         default: 0,
     },
+  lostFoundPosted: {
+        type: Number,
+        default: 0,
+    },
+  lostFoundClaimed: {
+        type: Number,
+        default: 0,
+    },
+  loyaltyMonths: {
+        type: Number,
+        default: 0,
+    },
   reviews: {
         type: [mongoose.Schema.Types.ObjectId],  // Array of ObjectIds
         ref: "Review",                           // Reference to the 'Review' model
