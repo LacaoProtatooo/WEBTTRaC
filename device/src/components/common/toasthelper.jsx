@@ -7,6 +7,11 @@ const showToast = ({ type, text1, text2, props = {} }) => {
     type,
     text1,
     text2,
+    visibilityTime: 3000, // 3 seconds (default is 4000ms)
+    autoHide: true,
+    topOffset: 60,
+    bottomOffset: 40,
+    onPress: () => Toast.hide(), // Tap to dismiss
     ...props,
   });
 };
@@ -21,8 +26,6 @@ export const Toasthelper = {
 
   showInfo: (message, description, extraProps = {}) =>
     showToast({ type: 'info', text1: message, text2: description, props: extraProps }),
-
-  
 };
 
 export default Toasthelper;
