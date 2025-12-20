@@ -19,7 +19,8 @@ export default function SickLeaveTab({
   sickLeaves, 
   loadingSickLeaves, 
   errorSickLeaves, 
-  onRefresh 
+  onRefresh,
+  onApprove,
 }) {
   const renderItem = ({ item }) => (
     <View style={sickLeaveStyles.card}>
@@ -47,6 +48,11 @@ export default function SickLeaveTab({
         ]}>
           {item.status.toUpperCase()}
         </Text>
+        {item.status === 'pending' && (
+          <TouchableOpacity style={sickLeaveStyles.approveBtn} onPress={() => onApprove?.(item._id)}>
+            <Text style={sickLeaveStyles.approveText}>Approve</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -136,5 +142,17 @@ const sickLeaveStyles = {
   status: {
     fontSize: 12,
     fontWeight: '700'
+  },
+  approveBtn: {
+    marginLeft: 12,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  approveText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
   }
 };

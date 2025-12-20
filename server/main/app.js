@@ -12,6 +12,7 @@ import licenseRoutes from '../routes/licenseRoute.js';
 import sickLeaveRoutes from '../routes/sickLeaveRoute.js';
 import forumRoutes from '../routes/forumRoute.js';
 import queueRoutes from '../routes/queueRoute.js';
+import lostFoundRoutes from '../routes/lostFoundRoute.js';
 
 const app = express();
 app.use(express.json());
@@ -45,6 +46,7 @@ app.use('/api/license', licenseRoutes);
 app.use('/api/sick-leave', sickLeaveRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/queue', queueRoutes);
+app.use('/api/lost-found', lostFoundRoutes);
 
 
 // Fallback for unknown routes

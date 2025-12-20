@@ -1,13 +1,14 @@
 import QueueEntry from '../models/queueEntryModel.js';
 import Tricycle from '../models/tricycleModel.js';
+import User from '../models/userModel.js';
 
 const activeStatuses = ['waiting', 'called'];
 
 // Fixed terminals (can be moved to DB later)
 const terminals = [
-  { id: 'terminal-1', name: 'Terminal 1', latitude: 14.511445966700096, longitude: 121.03384457224557, radiusMeters: 120 },
-  { id: 'terminal-2', name: 'Terminal 2', latitude: 14.513932064735052, longitude: 121.04019584947487, radiusMeters: 120 },
-  { id: 'terminal-3', name: 'Terminal 3', latitude: 14.514534704611194, longitude: 121.04273098634214, radiusMeters: 120 },
+  { id: 'terminal-1', name: 'Terminal 1', latitude: 14.511445966700096, longitude: 121.03384457224557, radiusMeters: 180 },
+  { id: 'terminal-2', name: 'Terminal 2', latitude: 14.513932064735052, longitude: 121.04019584947487, radiusMeters: 180 },
+  { id: 'terminal-3', name: 'Terminal 3', latitude: 14.514534704611194, longitude: 121.04273098634214, radiusMeters: 180 },
 ];
 
 const haversineMeters = (lat1, lon1, lat2, lon2) => {
@@ -121,6 +122,39 @@ export const cancelQueue = async (req, res) => {
     res.status(200).json({ success: true, message: 'Queue entry cancelled' });
   } catch (error) {
     console.error('Error cancelling queue entry:', error.message);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+export const callNext = async (req, res) => {
+  try {
+    const terminal = req.query.terminal || 'default';
+
+    // get current head
+    const current = await QueueEntry.findOne({ terminal, status: { $in: activeStatuses } }).sort({ createdAt: 1 });
+    if (!current) {
+      return res.status(200).json({ success: true, message: 'No active queue entries', data: null });
+    }
+
+    // mark current as done
+    current.status = 'done';
+    await current.save();
+
+    // bump trip counter for the driver who completed the trip
+    if (current.driver) {
+      await User.findByIdAndUpdate(current.driver, { $inc: { tripCount: 1 } }).catch(() => {});
+    }
+
+    // promote next entry to called
+    const next = await QueueEntry.findOne({ terminal, status: { $in: activeStatuses } }).sort({ createdAt: 1 });
+    if (next) {
+      next.status = 'called';
+      await next.save();
+    }
+
+    res.status(200).json({ success: true, message: 'Advanced queue', data: { called: next?._id || null } });
+  } catch (error) {
+    console.error('Error advancing queue:', error.message);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 };
