@@ -84,7 +84,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/reimu_marisa.png",
+          "icon": "./assets/webttrac_logo_bgrm.png",
           "color": "#ffffff"
         }
       ]

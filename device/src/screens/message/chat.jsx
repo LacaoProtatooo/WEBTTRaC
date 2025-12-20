@@ -26,12 +26,17 @@ import { getToken } from '../../utils/jwtStorage';
 
 const apiURL = Constants.expoConfig.extra?.BACKEND_URL || 'http://192.168.254.105:5000';
 
+// Polling interval in milliseconds (5 seconds)
+const POLLING_INTERVAL = 5000;
+
 const Chat = () => {
   const route = useRoute();
   const navigation = useNavigation();
   const db = useAsyncSQLiteContext();
   const currentUser = useSelector((state) => state.auth.user);
   const flatListRef = useRef(null);
+  const pollingTimerRef = useRef(null);
+  const lastMessageIdRef = useRef(null);
 
   const { userId, userName, userImage } = route.params;
 
@@ -86,7 +91,25 @@ const Chat = () => {
     loadMessages();
   }, [token, userId]);
 
-  // 4️⃣ Fetch messages safely
+  // 4️⃣ Start/Stop polling when component mounts/unmounts
+  useEffect(() => {
+    if (!token || !userId) return;
+
+    // Start polling
+    pollingTimerRef.current = setInterval(() => {
+      loadMessagesQuietly();
+    }, POLLING_INTERVAL);
+
+    // Cleanup: stop polling when leaving screen
+    return () => {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+  }, [token, userId]);
+
+  // 5️⃣ Fetch messages safely (with loading indicator)
   const loadMessages = async () => {
     try {
       setLoading(true);
@@ -96,7 +119,13 @@ const Chat = () => {
       });
 
       if (response.data.success) {
-        setMessages(response.data.messages || []);
+        const newMessages = response.data.messages || [];
+        setMessages(newMessages);
+        
+        // Update last message ID
+        if (newMessages.length > 0) {
+          lastMessageIdRef.current = newMessages[newMessages.length - 1]._id;
+        }
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -115,7 +144,39 @@ const Chat = () => {
     }
   };
 
-  // 5️⃣ Send message handler
+  // 6️⃣ Fetch messages quietly (for polling, no loading indicator)
+  const loadMessagesQuietly = async () => {
+    try {
+      const response = await axios.get(`${apiURL}/api/messages/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.data.success) {
+        const newMessages = response.data.messages || [];
+        
+        // Only update if there are new messages
+        if (newMessages.length > 0) {
+          const latestMessageId = newMessages[newMessages.length - 1]._id;
+          
+          // Check if there's a new message
+          if (latestMessageId !== lastMessageIdRef.current) {
+            setMessages(newMessages);
+            lastMessageIdRef.current = latestMessageId;
+            
+            // Auto scroll to bottom when new message arrives
+            setTimeout(() => {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }, 100);
+          }
+        }
+      }
+    } catch (error) {
+      // Silent fail for polling (don't show errors)
+      console.log('Polling error (ignored):', error.message);
+    }
+  };
+
+  // 7️⃣ Send message handler
   const sendMessageHandler = async () => {
     if (!messageText.trim()) return;
 
@@ -164,6 +225,9 @@ const Chat = () => {
           )
         );
 
+        // Update last message ID
+        lastMessageIdRef.current = response.data.message._id;
+
         // Auto scroll to bottom
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
@@ -188,7 +252,7 @@ const Chat = () => {
     }
   };
 
-  // 6️⃣ Render message bubble
+  // 8️⃣ Render message bubble
   const renderMessage = ({ item }) => {
     if (!currentUser) return null;
     
