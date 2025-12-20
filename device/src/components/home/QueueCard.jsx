@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import * as Location from 'expo-location';
 import { colors, spacing } from '../common/theme';
@@ -10,6 +10,22 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
   const [terminals, setTerminals] = useState([]);
   const [terminalId, setTerminalId] = useState(null);
   const [coords, setCoords] = useState(null);
+  const pollRef = useRef(null);
+  const [isFirst, setIsFirst] = useState(false);
+  const [locationPerm, setLocationPerm] = useState(null);
+  const [autoCancelling, setAutoCancelling] = useState(false);
+
+  const distanceMeters = (a, b) => {
+    if (!a || !b) return Infinity;
+    const toRad = (v) => (v * Math.PI) / 180;
+    const R = 6371000;
+    const dLat = toRad(b.latitude - a.latitude);
+    const dLon = toRad(b.longitude - a.longitude);
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  };
 
   const myEntry = useMemo(() => queue.find((q) => String(q.driver?._id || q.driver?.id || q.driver) === String(userId)) || null, [queue, userId]);
 
@@ -37,7 +53,7 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
     load();
   }, [token]);
 
-  // Fetch queue when terminal changes
+  // Fetch queue when terminal changes + start polling
   useEffect(() => {
     const load = async () => {
       if (!token || !terminalId) return;
@@ -56,6 +72,14 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
       }
     };
     load();
+
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (token && terminalId) {
+      pollRef.current = setInterval(load, 7000);
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [token, terminalId]);
 
   const requestLocation = async () => {
@@ -135,6 +159,68 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
     }
   };
 
+  const autoCancelIfOutside = async () => {
+    if (!token || !myEntry || !terminals?.length) return;
+    const targetTerminal = terminals.find((t) => t.id === (myEntry.terminal || terminalId));
+    if (!targetTerminal) return;
+    try {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted') {
+        const req = await Location.requestForegroundPermissionsAsync();
+        setLocationPerm(req.status);
+        if (req.status !== 'granted') return;
+      } else {
+        setLocationPerm(perm.status);
+      }
+
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const current = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      const dist = distanceMeters(current, { latitude: targetTerminal.latitude, longitude: targetTerminal.longitude });
+      const threshold = (targetTerminal.radiusMeters || 120) + 15; // small buffer to reduce jitter
+
+      if (dist > threshold && !autoCancelling) {
+        setAutoCancelling(true);
+        try {
+          const res = await fetch(`${BACKEND}/api/queue/${myEntry._id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (res.ok) {
+            setQueue((prev) => prev.filter((q) => String(q._id) !== String(myEntry._id)));
+            Alert.alert('Queue', 'You left the terminal zone. Removed from queue.');
+          }
+        } catch (e) {
+          console.warn('auto cancel error', e);
+        } finally {
+          setAutoCancelling(false);
+        }
+      }
+    } catch (e) {
+      console.warn('auto cancel locate error', e);
+    }
+  };
+
+  useEffect(() => {
+    if (!myEntry) {
+      setIsFirst(false);
+      return;
+    }
+    setIsFirst(Boolean(position === 1 || myEntry.status === 'called'));
+  }, [myEntry, position]);
+
+  useEffect(() => {
+    if (!token || !myEntry) return;
+    let timer;
+    const tick = () => {
+      autoCancelIfOutside();
+    };
+    tick();
+    timer = setInterval(tick, 12000);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [token, myEntry, terminals]);
+
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Terminal Queue</Text>
@@ -142,6 +228,12 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
         <Text style={styles.sub}>Body No: {assignedTricycle.bodyNumber} · Plate: {assignedTricycle.plateNumber}</Text>
       ) : (
         <Text style={styles.sub}>No tricycle assigned.</Text>
+      )}
+
+      {isFirst && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>You are up next. Proceed to depart.</Text>
+        </View>
       )}
 
       <View style={styles.terminalRow}>
@@ -210,6 +302,8 @@ const styles = StyleSheet.create({
   statusBox: { marginTop: spacing.small, padding: spacing.small, backgroundColor: colors.ivory1, borderRadius: 10, borderWidth: 1, borderColor: colors.ivory3 },
   statusText: { color: colors.orangeShade7, fontWeight: '700' },
   position: { marginTop: 4, color: colors.orangeShade5 },
+  banner: { marginTop: spacing.small, padding: spacing.small, backgroundColor: '#ffe8cc', borderRadius: 10, borderWidth: 1, borderColor: colors.orangeShade3 },
+  bannerText: { color: colors.orangeShade7, fontWeight: '700' },
   btn: { marginTop: spacing.small, backgroundColor: colors.primary, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   disabled: { opacity: 0.6 },
   cancel: { backgroundColor: '#b02a37' },
