@@ -7,6 +7,9 @@ import {
   fetchSickLeaves,
   scanReceipt
 } from '../actions/operatorAction';
+import {
+  approveSickLeave,
+} from '../actions/operatorAction';
 
 const initialState = {
   // Operator overview data
@@ -139,6 +142,20 @@ const operatorSlice = createSlice({
         state.loadingSickLeaves = false;
         state.errorSickLeaves = action.payload;
       })
+
+        // ========== APPROVE SICK LEAVE ==========
+        .addCase(approveSickLeave.pending, (state) => {
+          state.errorSickLeaves = null;
+        })
+        .addCase(approveSickLeave.fulfilled, (state, action) => {
+          const updated = action.payload;
+          if (updated?._id) {
+            state.sickLeaves = state.sickLeaves.map((sl) => sl._id === updated._id ? updated : sl);
+          }
+        })
+        .addCase(approveSickLeave.rejected, (state, action) => {
+          state.errorSickLeaves = action.payload;
+        })
       
       // ========== SCAN RECEIPT ==========
       .addCase(scanReceipt.pending, (state) => {

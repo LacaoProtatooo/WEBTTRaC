@@ -37,6 +37,26 @@ export const fetchOperatorData = createAsyncThunk(
   }
 );
 
+export const approveSickLeave = createAsyncThunk(
+  'operator/approveSickLeave',
+  async ({ token, BACKEND, id }, thunkAPI) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/sick-leave/${id}/approve`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return data.data;
+      }
+      return thunkAPI.rejectWithValue(data.message || 'Failed to approve sick leave');
+    } catch (error) {
+      console.error('Error approving sick leave:', error);
+      return thunkAPI.rejectWithValue(error.message);
+    }
+  }
+);
+
 export const assignDriver = createAsyncThunk(
   'operator/assignDriver',
   async ({ token, BACKEND, payload }, thunkAPI) => {

@@ -16,6 +16,7 @@ import {
   unassignDriver, 
   createTricycle,
   fetchSickLeaves,
+  approveSickLeave,
   clearErrors
 } from '../../redux/actions/operatorAction';
 
@@ -274,6 +275,14 @@ export default function OperatorScreen({ navigation }) {
     }
   };
 
+  const handleApproveSickLeave = (id) => {
+    if (token) {
+      dispatch(approveSickLeave({ token, BACKEND, id })).then(() => {
+        dispatch(fetchSickLeaves({ token, BACKEND }));
+      });
+    }
+  };
+
   // Show loading screen while database or token is being initialized
   if (!db || (loading && !refreshing)) {
     return <LoadingScreen />;
@@ -372,6 +381,7 @@ export default function OperatorScreen({ navigation }) {
               loadingSickLeaves={loadingSickLeaves}
               errorSickLeaves={operatorState.errorSickLeaves}
               onRefresh={handleFetchSickLeaves}
+              onApprove={handleApproveSickLeave}
             />
           )}
         </Tab.Screen>

@@ -89,3 +89,40 @@ export const getOperatorSickLeaves = async (req, res) => {
         res.status(500).json({ success: false, message: "Server Error" });
     }
 };
+
+// Operator approves a sick leave for a driver they manage
+export const approveSickLeave = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const operatorId = req.user.id;
+
+        const sickLeave = await SickLeave.findById(id);
+        if (!sickLeave) {
+            return res.status(404).json({ success: false, message: "Sick leave not found" });
+        }
+
+        // Ensure this operator manages the driver (owns a tricycle assigned to them)
+        const tricycles = await Tricycle.find({ operator: operatorId });
+        const driverIds = new Set();
+        tricycles.forEach(t => {
+            if (t.driver) driverIds.add(t.driver.toString());
+            if (t.schedules) {
+                t.schedules.forEach(s => {
+                    if (s.driver) driverIds.add(s.driver.toString());
+                });
+            }
+        });
+
+        if (!driverIds.has(sickLeave.driver.toString())) {
+            return res.status(403).json({ success: false, message: "Not authorized to approve this sick leave" });
+        }
+
+        sickLeave.status = 'approved';
+        await sickLeave.save();
+
+        res.status(200).json({ success: true, message: "Sick leave approved", data: sickLeave });
+    } catch (error) {
+        console.error("Error approving sick leave:", error);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+};
