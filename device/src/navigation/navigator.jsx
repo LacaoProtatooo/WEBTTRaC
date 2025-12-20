@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
     zIndex: 999,
     backgroundColor: 'white',
     borderRadius: 30,
-    padding: 10,
+    padding: 5,
     elevation: 5,
   },
   drawerOverlay: {
