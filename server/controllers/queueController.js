@@ -1,5 +1,6 @@
 import QueueEntry from '../models/queueEntryModel.js';
 import Tricycle from '../models/tricycleModel.js';
+import User from '../models/userModel.js';
 
 const activeStatuses = ['waiting', 'called'];
 
@@ -138,6 +139,11 @@ export const callNext = async (req, res) => {
     // mark current as done
     current.status = 'done';
     await current.save();
+
+    // bump trip counter for the driver who completed the trip
+    if (current.driver) {
+      await User.findByIdAndUpdate(current.driver, { $inc: { tripCount: 1 } }).catch(() => {});
+    }
 
     // promote next entry to called
     const next = await QueueEntry.findOne({ terminal, status: { $in: activeStatuses } }).sort({ createdAt: 1 });

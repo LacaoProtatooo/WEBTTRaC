@@ -159,6 +159,35 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
     }
   };
 
+  const depart = async () => {
+    if (!token || !terminalId || position !== 1) return;
+    setJoining(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/queue/advance?terminal=${encodeURIComponent(terminalId)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        Alert.alert('Queue', json.message || 'Unable to advance queue');
+      }
+      // Refresh queue after advance
+      await fetch(`${BACKEND}/api/queue?terminal=${encodeURIComponent(terminalId)}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((j) => {
+          if (j.success) {
+            const sorted = (j.data || []).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+            setQueue(sorted);
+          }
+        });
+    } catch (e) {
+      console.warn('depart error', e);
+      Alert.alert('Queue', 'Network or server error');
+    } finally {
+      setJoining(false);
+    }
+  };
+
   const autoCancelIfOutside = async () => {
     if (!token || !myEntry || !terminals?.length) return;
     const targetTerminal = terminals.find((t) => t.id === (myEntry.terminal || terminalId));
@@ -259,6 +288,9 @@ const QueueCard = ({ token, BACKEND, assignedTricycle, userId }) => {
             <View style={styles.statusBox}>
               <Text style={styles.statusText}>You are in the queue</Text>
               <Text style={styles.position}>Position: {position ?? '—'}</Text>
+              <TouchableOpacity style={[styles.btn, styles.depart, (position !== 1) && styles.disabled]} onPress={depart} disabled={joining || position !== 1}>
+                <Text style={styles.btnText}>{joining ? 'Advancing...' : 'Depart / Call next'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.btn, styles.cancel]} onPress={cancel} disabled={joining}>
                 <Text style={styles.btnText}>Leave queue</Text>
               </TouchableOpacity>
@@ -306,6 +338,7 @@ const styles = StyleSheet.create({
   bannerText: { color: colors.orangeShade7, fontWeight: '700' },
   btn: { marginTop: spacing.small, backgroundColor: colors.primary, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   disabled: { opacity: 0.6 },
+  depart: { backgroundColor: '#0d6efd' },
   cancel: { backgroundColor: '#b02a37' },
   btnText: { color: colors.ivory1, fontWeight: '700' },
   listTitle: { marginTop: spacing.medium, fontWeight: '700', color: colors.orangeShade6 },
