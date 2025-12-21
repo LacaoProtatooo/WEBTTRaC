@@ -39,6 +39,14 @@
         "googleMaps": {
           "apiKey": "AIzaSyBE_y3W7JmPpbZVpl_uPFV0wSPOxInoAI8"
         }
+      },
+      "build": {
+        "production": {
+          "autoIncrement": true,
+          "android": {
+            "buildType": "apk"
+          }
+        }
       }
     },
     "web": {
