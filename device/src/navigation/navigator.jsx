@@ -129,7 +129,7 @@ const Navigator = () => {
               }
             }}
           >
-            <Ionicons name="menu" size={30} color="#000" />
+            <Ionicons name="menu" size={25} color="#000000a1" />
           </TouchableOpacity>
 
           {/* Stack Navigator */}

@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.xsmall,
+    marginTop: spacing.small,
   },
   legendIcon: {
     width: 24,
