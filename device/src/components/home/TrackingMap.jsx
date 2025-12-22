@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Easing } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Easing, PanResponder } from 'react-native';
 import MapView, { Polyline, Marker, PROVIDER_GOOGLE, AnimatedRegion, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
@@ -14,9 +14,9 @@ import { BG_TASK_NAME } from '../../components/services/BackgroundLocationTask';
 const KM_KEY = 'vehicle_current_km_v1';
 
 const TERMINALS = [
-  { id: 'terminal-1', name: 'Terminal 1', latitude: 14.511445966700096, longitude: 121.03384457224557, radiusMeters: 180 },
-  { id: 'terminal-2', name: 'Terminal 2', latitude: 14.513932064735052, longitude: 121.04019584947487, radiusMeters: 180 },
-  { id: 'terminal-3', name: 'Terminal 3', latitude: 14.514534704611194, longitude: 121.04273098634214, radiusMeters: 180 },
+  { id: 'terminal-1', name: 'Terminal 1', latitude: 14.511445966700096, longitude: 121.03384457224557, radiusMeters: 120 },
+  { id: 'terminal-2', name: 'Terminal 2', latitude: 14.513932064735052, longitude: 121.04019584947487, radiusMeters: 120 },
+  { id: 'terminal-3', name: 'Terminal 3', latitude: 14.514534704611194, longitude: 121.04273098634214, radiusMeters: 120 },
 ];
 
 function haversineMeters(a, b) {
@@ -63,9 +63,17 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
   const reliveMarker = useRef(new AnimatedRegion({ latitude: 0, longitude: 0 })).current;
   const [reliveActive, setReliveActive] = useState(false);
   const [reliveProgress, setReliveProgress] = useState(0);
+  const [reliveSpeed, setReliveSpeed] = useState(1);
+  const [relivePaused, setRelivePaused] = useState(false);
+  const [reliveTimestamp, setReliveTimestamp] = useState(null);
   const reliveIndexRef = useRef(0);
   const relivePathRef = useRef([]);
   const reliveActiveRef = useRef(false);
+  const relivePausedRef = useRef(false);
+  const reliveSpeedRef = useRef(1);
+  const [scrubTooltip, setScrubTooltip] = useState(null);
+  const progressBarRef = useRef(null);
+  const progressBarWidth = useRef(0);
   const insideTerminalRef = useRef(null);
   const onEnterRef = useRef(onEnterTerminalZone);
   const seedRef = useRef(null);
@@ -202,6 +210,14 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
     reliveActiveRef.current = reliveActive;
   }, [reliveActive]);
 
+  useEffect(() => {
+    relivePausedRef.current = relivePaused;
+  }, [relivePaused]);
+
+  useEffect(() => {
+    reliveSpeedRef.current = reliveSpeed;
+  }, [reliveSpeed]);
+
   // start background tracking task
   async function startBackgroundTracking() {
     try {
@@ -256,8 +272,13 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
       reliveMarker.stopAnimation();
     }
     reliveActiveRef.current = false;
+    relivePausedRef.current = false;
     setReliveActive(false);
+    setRelivePaused(false);
     setReliveProgress(0);
+    setReliveTimestamp(null);
+    setReliveSpeed(1);
+    reliveSpeedRef.current = 1;
     reliveIndexRef.current = 0;
     if (restoreCamera && positions.length) {
       const last = positions[positions.length - 1];
@@ -266,7 +287,7 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
   }, [positions, reliveMarker]);
 
   const animateReliveSegment = useCallback(() => {
-    if (!reliveActiveRef.current) return;
+    if (!reliveActiveRef.current || relivePausedRef.current) return;
     const path = relivePathRef.current;
     const idx = reliveIndexRef.current;
     if (!path || path.length < 2 || idx >= path.length - 1) {
@@ -277,8 +298,21 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
     const start = path[idx];
     const end = path[idx + 1];
     const meters = haversineMeters(start, end);
-    const duration = segmentDurationMs(meters);
+    const baseDuration = segmentDurationMs(meters);
+    const duration = baseDuration / reliveSpeedRef.current;
     const heading = headingBetween(start, end);
+
+    // Update timestamp based on position data or elapsed progress
+    if (end.timestamp) {
+      setReliveTimestamp(new Date(end.timestamp));
+    } else {
+      // Estimate time based on progress
+      const startTime = path[0]?.timestamp ? new Date(path[0].timestamp) : new Date();
+      const endTime = path[path.length - 1]?.timestamp ? new Date(path[path.length - 1].timestamp) : new Date(startTime.getTime() + path.length * 1000);
+      const totalDuration = endTime.getTime() - startTime.getTime();
+      const currentTime = new Date(startTime.getTime() + (idx / (path.length - 1)) * totalDuration);
+      setReliveTimestamp(currentTime);
+    }
 
     reliveMarker.timing({
       latitude: end.latitude,
@@ -288,6 +322,7 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
       useNativeDriver: false,
     }).start(({ finished }) => {
       if (!finished || !reliveActiveRef.current) return;
+      if (relivePausedRef.current) return;
       reliveIndexRef.current += 1;
       const totalSegments = Math.max(path.length - 1, 1);
       setReliveProgress(reliveIndexRef.current / totalSegments);
@@ -323,8 +358,11 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
     }
 
     setReliveProgress(0);
+    setRelivePaused(false);
+    relivePausedRef.current = false;
     reliveActiveRef.current = true;
     setReliveActive(true);
+    setReliveTimestamp(snapshot[0]?.timestamp ? new Date(snapshot[0].timestamp) : new Date());
 
     mapRef.current?.animateCamera(
       {
@@ -338,6 +376,142 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
 
     requestAnimationFrame(animateReliveSegment);
   }, [animateReliveSegment, positions, reliveMarker]);
+
+  const toggleRelivePause = useCallback(() => {
+    if (!reliveActiveRef.current) return;
+    const newPaused = !relivePausedRef.current;
+    relivePausedRef.current = newPaused;
+    setRelivePaused(newPaused);
+    if (!newPaused) {
+      requestAnimationFrame(animateReliveSegment);
+    }
+  }, [animateReliveSegment]);
+
+  const seekRelive = useCallback((direction) => {
+    if (!reliveActiveRef.current) return;
+    const path = relivePathRef.current;
+    if (!path || path.length < 2) return;
+
+    const step = direction === 'forward' ? 10 : -10;
+    let newIdx = reliveIndexRef.current + step;
+    newIdx = Math.max(0, Math.min(newIdx, path.length - 1));
+    reliveIndexRef.current = newIdx;
+
+    const pos = path[newIdx];
+    if (reliveMarker?.setValue) {
+      reliveMarker.setValue(pos);
+    }
+
+    const totalSegments = Math.max(path.length - 1, 1);
+    setReliveProgress(newIdx / totalSegments);
+
+    if (pos.timestamp) {
+      setReliveTimestamp(new Date(pos.timestamp));
+    }
+
+    const nextIdx = Math.min(newIdx + 1, path.length - 1);
+    const heading = headingBetween(pos, path[nextIdx]);
+    mapRef.current?.animateCamera(
+      { center: pos, heading, pitch: 65, zoom: 18 },
+      { duration: 300 }
+    );
+
+    if (!relivePausedRef.current) {
+      requestAnimationFrame(animateReliveSegment);
+    }
+  }, [animateReliveSegment, reliveMarker]);
+
+  const changeReliveSpeed = useCallback((speed) => {
+    reliveSpeedRef.current = speed;
+    setReliveSpeed(speed);
+  }, []);
+
+  const seekToPosition = useCallback((percentage) => {
+    if (!reliveActiveRef.current) return;
+    const path = relivePathRef.current;
+    if (!path || path.length < 2) return;
+
+    const clampedPct = Math.max(0, Math.min(1, percentage));
+    const newIdx = Math.round(clampedPct * (path.length - 1));
+    reliveIndexRef.current = newIdx;
+
+    const pos = path[newIdx];
+    if (reliveMarker?.setValue) {
+      reliveMarker.setValue(pos);
+    }
+
+    const totalSegments = Math.max(path.length - 1, 1);
+    setReliveProgress(newIdx / totalSegments);
+
+    // Update timestamp
+    if (pos.timestamp) {
+      setReliveTimestamp(new Date(pos.timestamp));
+    } else {
+      const startTime = path[0]?.timestamp ? new Date(path[0].timestamp) : new Date();
+      const endTime = path[path.length - 1]?.timestamp ? new Date(path[path.length - 1].timestamp) : new Date(startTime.getTime() + path.length * 1000);
+      const totalDuration = endTime.getTime() - startTime.getTime();
+      const currentTime = new Date(startTime.getTime() + clampedPct * totalDuration);
+      setReliveTimestamp(currentTime);
+    }
+
+    const nextIdx = Math.min(newIdx + 1, path.length - 1);
+    const heading = headingBetween(pos, path[nextIdx]);
+    mapRef.current?.animateCamera(
+      { center: pos, heading, pitch: 65, zoom: 18 },
+      { duration: 300 }
+    );
+  }, [reliveMarker]);
+
+  const getTooltipTime = useCallback((percentage) => {
+    const path = relivePathRef.current;
+    if (!path || path.length < 2) return null;
+
+    const clampedPct = Math.max(0, Math.min(1, percentage));
+    const idx = Math.round(clampedPct * (path.length - 1));
+    const pos = path[idx];
+
+    if (pos?.timestamp) {
+      return new Date(pos.timestamp);
+    } else {
+      const startTime = path[0]?.timestamp ? new Date(path[0].timestamp) : new Date();
+      const endTime = path[path.length - 1]?.timestamp ? new Date(path[path.length - 1].timestamp) : new Date(startTime.getTime() + path.length * 1000);
+      const totalDuration = endTime.getTime() - startTime.getTime();
+      return new Date(startTime.getTime() + clampedPct * totalDuration);
+    }
+  }, []);
+
+  const progressPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => reliveActiveRef.current,
+      onMoveShouldSetPanResponder: () => reliveActiveRef.current,
+      onPanResponderGrant: (evt) => {
+        if (!reliveActiveRef.current) return;
+        // Pause while scrubbing
+        relivePausedRef.current = true;
+        setRelivePaused(true);
+        
+        const { locationX } = evt.nativeEvent;
+        const width = progressBarWidth.current || 1;
+        const pct = locationX / width;
+        setScrubTooltip({ x: locationX, time: getTooltipTime(pct) });
+        seekToPosition(pct);
+      },
+      onPanResponderMove: (evt) => {
+        if (!reliveActiveRef.current) return;
+        const { locationX } = evt.nativeEvent;
+        const width = progressBarWidth.current || 1;
+        const pct = Math.max(0, Math.min(1, locationX / width));
+        setScrubTooltip({ x: Math.max(0, Math.min(locationX, width)), time: getTooltipTime(pct) });
+        seekToPosition(pct);
+      },
+      onPanResponderRelease: () => {
+        setScrubTooltip(null);
+      },
+      onPanResponderTerminate: () => {
+        setScrubTooltip(null);
+      },
+    })
+  ).current;
 
   return (
     <View style={styles.container}>
@@ -431,10 +605,79 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
         {reliveActive && (
           <View style={styles.relivePanel}>
             <Text style={styles.reliveLabel}>3D Route Animation</Text>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${Math.min(Math.max(reliveProgress, 0), 1) * 100}%` }]} />
+            
+            {/* Timestamp Display */}
+            {reliveTimestamp && (
+              <Text style={styles.reliveTimestamp}>
+                {reliveTimestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </Text>
+            )}
+            
+            {/* Seekable Progress Bar */}
+            <View style={styles.progressContainer}>
+              {scrubTooltip && (
+                <View style={[styles.scrubTooltip, { left: Math.max(0, Math.min(scrubTooltip.x - 40, progressBarWidth.current - 80)) }]}>
+                  <Text style={styles.scrubTooltipText}>
+                    {scrubTooltip.time?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) || '--:--:--'}
+                  </Text>
+                  <View style={styles.scrubTooltipArrow} />
+                </View>
+              )}
+              <View
+                ref={progressBarRef}
+                style={styles.progressTrack}
+                onLayout={(e) => { progressBarWidth.current = e.nativeEvent.layout.width; }}
+                {...progressPanResponder.panHandlers}
+              >
+                <View style={[styles.progressFill, { width: `${Math.min(Math.max(reliveProgress, 0), 1) * 100}%` }]} />
+                {/* Scrub Handle */}
+                <View style={[styles.scrubHandle, { left: `${Math.min(Math.max(reliveProgress, 0), 1) * 100}%` }]} />
+              </View>
+              <View style={styles.progressLabels}>
+                <Text style={styles.progressLabelText}>0%</Text>
+                <Text style={styles.progressLabelText}>Drag to seek</Text>
+                <Text style={styles.progressLabelText}>100%</Text>
+              </View>
             </View>
             <Text style={styles.relivePercent}>{Math.round(reliveProgress * 100)}%</Text>
+            
+            {/* Playback Controls */}
+            <View style={styles.reliveControls}>
+              {/* Seek Backward */}
+              <TouchableOpacity onPress={() => seekRelive('backward')} style={styles.reliveControlBtn}>
+                <Ionicons name="play-back" size={20} color="#fff" />
+              </TouchableOpacity>
+              
+              {/* Play/Pause */}
+              <TouchableOpacity onPress={toggleRelivePause} style={[styles.reliveControlBtn, styles.relivePlayBtn]}>
+                <Ionicons name={relivePaused ? 'play' : 'pause'} size={24} color="#fff" />
+              </TouchableOpacity>
+              
+              {/* Seek Forward */}
+              <TouchableOpacity onPress={() => seekRelive('forward')} style={styles.reliveControlBtn}>
+                <Ionicons name="play-forward" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            
+            {/* Speed Controls */}
+            <View style={styles.speedControls}>
+              <Text style={styles.speedLabel}>Speed:</Text>
+              {[1, 2, 4].map((speed) => (
+                <TouchableOpacity
+                  key={speed}
+                  onPress={() => changeReliveSpeed(speed)}
+                  style={[
+                    styles.speedBtn,
+                    reliveSpeed === speed && styles.speedBtnActive
+                  ]}
+                >
+                  <Text style={[
+                    styles.speedBtnText,
+                    reliveSpeed === speed && styles.speedBtnTextActive
+                  ]}>{speed}x</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         )}
 
@@ -532,20 +775,142 @@ const styles = StyleSheet.create({
     color: colors.orangeShade7,
     marginBottom: 4,
   },
+  progressContainer: {
+    position: 'relative',
+    marginVertical: 8,
+  },
   progressTrack: {
-    height: 6,
-    borderRadius: 3,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: colors.ivory2,
-    overflow: 'hidden',
+    justifyContent: 'center',
+    position: 'relative',
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#0d6efd',
+    borderRadius: 10,
+    position: 'absolute',
+    left: 0,
+    top: 0,
+  },
+  scrubHandle: {
+    position: 'absolute',
+    top: -4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    borderWidth: 3,
+    borderColor: '#0d6efd',
+    marginLeft: -14,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  scrubTooltip: {
+    position: 'absolute',
+    bottom: 32,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    zIndex: 10,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  scrubTooltipText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  scrubTooltipArrow: {
+    position: 'absolute',
+    bottom: -6,
+    left: '50%',
+    marginLeft: -6,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 6,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: 'rgba(0,0,0,0.85)',
+  },
+  progressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  progressLabelText: {
+    fontSize: 10,
+    color: colors.orangeShade5,
   },
   relivePercent: {
     textAlign: 'right',
     marginTop: 4,
     fontWeight: '700',
     color: colors.primary,
+  },
+  reliveTimestamp: {
+    textAlign: 'center',
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.orangeShade7,
+    marginBottom: 8,
+    fontFamily: 'monospace',
+  },
+  reliveControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 12,
+  },
+  reliveControlBtn: {
+    backgroundColor: '#0d6efd',
+    padding: 10,
+    borderRadius: 20,
+  },
+  relivePlayBtn: {
+    backgroundColor: colors.primary,
+    padding: 12,
+    borderRadius: 24,
+  },
+  speedControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 8,
+  },
+  speedLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.orangeShade6,
+    marginRight: 4,
+  },
+  speedBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: colors.ivory2,
+    borderWidth: 1,
+    borderColor: colors.ivory3,
+  },
+  speedBtnActive: {
+    backgroundColor: '#0d6efd',
+    borderColor: '#0d6efd',
+  },
+  speedBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.orangeShade6,
+  },
+  speedBtnTextActive: {
+    color: '#fff',
   },
 });
