@@ -98,10 +98,8 @@ const DashboardTab = () => {
     }
   };
 
-  // keep only Rating stat; replace Completed with WeatherWidget below
-  const statsData = [
-    { icon: 'star-outline', value: Number(user?.rating || 0).toFixed(1), label: 'Rating', bg: '#ffc107' },
-  ];
+  // Stats removed: rating stat hidden on maintenance/dashboard
+  const statsData = [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -128,11 +126,7 @@ const DashboardTab = () => {
           />
         </View>
 
-        <View style={styles.statsContainer}>
-          {statsData.map((s, i) => (
-            <StatCard key={i} icon={s.icon} bgColor={s.bg} value={s.value} label={s.label} />
-          ))}
-        </View>
+        {/* Stats removed (rating hidden) */}
 
         {/* NEW: Weather for today + following hours */}
         <WeatherWidget />
