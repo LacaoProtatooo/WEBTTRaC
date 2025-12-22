@@ -235,7 +235,7 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
 				showsVerticalScrollIndicator={false}
 			>
 				{/* Vehicle Diagnostic View */}
-				<VehicleDiagnostic partsStatus={partsStatus} onPartPress={markDone} />
+				<VehicleDiagnostic partsStatus={partsStatus} />
 				
 				{/* Detailed List View */}
 				<Text style={styles.sectionTitle}>Maintenance Schedule Details</Text>

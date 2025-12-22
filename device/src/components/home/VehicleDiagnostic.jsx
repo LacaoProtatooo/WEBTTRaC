@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Path, Circle, Rect, Line, Ellipse, G, Defs, LinearGradient, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Path, Circle, Rect, Line, Ellipse, G, Defs, LinearGradient, Stop, Text as SvgText, Polygon } from 'react-native-svg';
 import { spacing } from '../common/theme';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -15,341 +15,435 @@ export const getWearColor = (progress) => {
 	return '#dc2626'; // Overdue - Dark Red
 };
 
-// Motorcycle Blueprint Component - Realistic Side View
-const VehicleDiagnostic = ({ partsStatus, onPartPress }) => {
+// Realistic Motorcycle Diagnostic Display
+const VehicleDiagnostic = ({ partsStatus }) => {
 	const getPartColor = (key) => {
 		const progress = partsStatus[key]?.progress || 0;
 		return getWearColor(progress);
 	};
-	
-	const getPartProgress = (key) => {
-		return partsStatus[key]?.progress || 0;
-	};
 
 	const svgWidth = screenWidth - 32;
-	const svgHeight = 280;
+	const svgHeight = 340;
+
+	// Label with pointer line component - neutral colors, status shown on parts
+	const PartLabel = ({ x, y, labelX, labelY, label, align = 'start' }) => {
+		return (
+			<G>
+				{/* Pointer line */}
+				<Line x1={x} y1={y} x2={labelX} y2={labelY} stroke="#64748b" strokeWidth="1" strokeDasharray="2,2" />
+				{/* Dot at part */}
+				<Circle cx={x} cy={y} r="3" fill="#94a3b8" />
+				{/* Label background */}
+				<Rect 
+					x={align === 'end' ? labelX - 62 : labelX - 2} 
+					y={labelY - 10} 
+					width="64" 
+					height="14" 
+					rx="3" 
+					fill="#1e293b" 
+					opacity="0.95"
+				/>
+				{/* Label text */}
+				<SvgText 
+					x={align === 'end' ? labelX - 5 : labelX} 
+					y={labelY} 
+					fontSize="8" 
+					fill="#94a3b8" 
+					textAnchor={align}
+					fontWeight="500"
+				>
+					{label}
+				</SvgText>
+			</G>
+		);
+	};
 
 	return (
 		<View style={styles.container}>
 			{/* Header */}
 			<View style={styles.header}>
-				<Ionicons name="construct" size={20} color="#60a5fa" />
+				<Ionicons name="speedometer" size={20} color="#60a5fa" />
 				<Text style={styles.title}>Vehicle Diagnostic</Text>
 			</View>
-			<Text style={styles.subtitle}>Tap parts to mark as serviced</Text>
+			<Text style={styles.subtitle}>Real-time parts condition overview</Text>
 			
 			<View style={styles.svgContainer}>
-				<Svg width={svgWidth} height={svgHeight} viewBox="0 0 380 260">
+				<Svg width={svgWidth} height={svgHeight} viewBox="0 0 380 320">
 					<Defs>
 						{/* Gradients */}
 						<LinearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-							<Stop offset="0" stopColor="#1e3a5f" stopOpacity="1" />
-							<Stop offset="1" stopColor="#0f172a" stopOpacity="1" />
-						</LinearGradient>
-						<LinearGradient id="metalGrad" x1="0" y1="0" x2="0" y2="1">
-							<Stop offset="0" stopColor="#64748b" stopOpacity="1" />
-							<Stop offset="1" stopColor="#334155" stopOpacity="1" />
+							<Stop offset="0" stopColor="#0c1929" stopOpacity="1" />
+							<Stop offset="1" stopColor="#0a1628" stopOpacity="1" />
 						</LinearGradient>
 						<LinearGradient id="tireGrad" x1="0" y1="0" x2="1" y2="1">
+							<Stop offset="0" stopColor="#1f2937" stopOpacity="1" />
+							<Stop offset="1" stopColor="#111827" stopOpacity="1" />
+						</LinearGradient>
+						<LinearGradient id="chromeGrad" x1="0" y1="0" x2="0" y2="1">
+							<Stop offset="0" stopColor="#9ca3af" stopOpacity="1" />
+							<Stop offset="0.5" stopColor="#6b7280" stopOpacity="1" />
+							<Stop offset="1" stopColor="#4b5563" stopOpacity="1" />
+						</LinearGradient>
+						<LinearGradient id="engineGrad" x1="0" y1="0" x2="0" y2="1">
 							<Stop offset="0" stopColor="#374151" stopOpacity="1" />
 							<Stop offset="1" stopColor="#1f2937" stopOpacity="1" />
+						</LinearGradient>
+						<LinearGradient id="tankGrad" x1="0" y1="0" x2="0" y2="1">
+							<Stop offset="0" stopColor="#1e40af" stopOpacity="1" />
+							<Stop offset="0.5" stopColor="#1e3a8a" stopOpacity="1" />
+							<Stop offset="1" stopColor="#172554" stopOpacity="1" />
+						</LinearGradient>
+						<LinearGradient id="seatGrad" x1="0" y1="0" x2="0" y2="1">
+							<Stop offset="0" stopColor="#292524" stopOpacity="1" />
+							<Stop offset="1" stopColor="#1c1917" stopOpacity="1" />
 						</LinearGradient>
 					</Defs>
 					
 					{/* Background */}
-					<Rect x="0" y="0" width="380" height="260" fill="url(#bgGrad)" rx="8" />
+					<Rect x="0" y="0" width="380" height="320" fill="url(#bgGrad)" rx="8" />
 					
-					{/* Grid lines */}
-					{[40, 80, 120, 160, 200, 240].map(y => (
-						<Line key={`h${y}`} x1="0" y1={y} x2="380" y2={y} stroke="#1e40af" strokeWidth="0.3" strokeOpacity="0.3" />
-					))}
-					{[40, 80, 120, 160, 200, 240, 280, 320, 360].map(x => (
-						<Line key={`v${x}`} x1={x} y1="0" x2={x} y2="260" stroke="#1e40af" strokeWidth="0.3" strokeOpacity="0.3" />
+					{/* Subtle grid */}
+					{[50, 100, 150, 200, 250].map(y => (
+						<Line key={`h${y}`} x1="0" y1={y} x2="380" y2={y} stroke="#1e3a5f" strokeWidth="0.3" strokeOpacity="0.2" />
 					))}
 					
-					{/* Ground line */}
-					<Line x1="20" y1="220" x2="360" y2="220" stroke="#475569" strokeWidth="1" strokeDasharray="8,4" />
+					{/* Ground shadow */}
+					<Ellipse cx="190" cy="265" rx="130" ry="8" fill="#000" opacity="0.3" />
 					
-					{/* === REAR WHEEL - tire_pressure === */}
-					<G onPress={() => onPartPress('tire_pressure')}>
-						{/* Outer tire */}
-						<Circle cx="85" cy="175" r="42" fill="url(#tireGrad)" stroke={getPartColor('tire_pressure')} strokeWidth="3" />
-						{/* Tire tread pattern */}
-						<Circle cx="85" cy="175" r="38" fill="none" stroke="#4b5563" strokeWidth="4" strokeDasharray="6,4" />
-						{/* Rim */}
-						<Circle cx="85" cy="175" r="28" fill="none" stroke="#94a3b8" strokeWidth="2" />
-						<Circle cx="85" cy="175" r="20" fill="none" stroke="#64748b" strokeWidth="1" />
-						{/* Hub */}
-						<Circle cx="85" cy="175" r="8" fill={getPartColor('tire_pressure')} />
+					{/* === REAR WHEEL === */}
+					<G>
+						{/* Outer tire with tread */}
+						<Circle cx="85" cy="210" r="48" fill="url(#tireGrad)" />
+						{/* Status indicator ring on tire */}
+						<Circle cx="85" cy="210" r="46" fill="none" stroke={getPartColor('tire_pressure')} strokeWidth="3" opacity="0.8" />
+						<Circle cx="85" cy="210" r="44" fill="none" stroke="#374151" strokeWidth="6" />
+						{/* Tread pattern */}
+						{[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((angle, i) => (
+							<Line 
+								key={`rtread${i}`}
+								x1={85 + 40 * Math.cos(angle * Math.PI / 180)}
+								y1={210 + 40 * Math.sin(angle * Math.PI / 180)}
+								x2={85 + 48 * Math.cos(angle * Math.PI / 180)}
+								y2={210 + 48 * Math.sin(angle * Math.PI / 180)}
+								stroke="#4b5563"
+								strokeWidth="3"
+							/>
+						))}
+						{/* Rim - chrome effect */}
+						<Circle cx="85" cy="210" r="32" fill="none" stroke="url(#chromeGrad)" strokeWidth="3" />
+						<Circle cx="85" cy="210" r="28" fill="none" stroke="#6b7280" strokeWidth="1" />
 						{/* Spokes */}
-						{[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+						{[0, 36, 72, 108, 144, 180, 216, 252, 288, 324].map((angle, i) => (
 							<Line 
 								key={`rspoke${i}`}
-								x1={85 + 10 * Math.cos(angle * Math.PI / 180)}
-								y1={175 + 10 * Math.sin(angle * Math.PI / 180)}
-								x2={85 + 26 * Math.cos(angle * Math.PI / 180)}
-								y2={175 + 26 * Math.sin(angle * Math.PI / 180)}
-								stroke="#94a3b8"
+								x1={85 + 8 * Math.cos(angle * Math.PI / 180)}
+								y1={210 + 8 * Math.sin(angle * Math.PI / 180)}
+								x2={85 + 28 * Math.cos(angle * Math.PI / 180)}
+								y2={210 + 28 * Math.sin(angle * Math.PI / 180)}
+								stroke="#9ca3af"
 								strokeWidth="1.5"
 							/>
 						))}
-						{/* Wear indicator */}
-						{getPartProgress('tire_pressure') > 50 && (
-							<>
-								<Path d="M 70,160 Q 75,155 80,162" fill="none" stroke="#92400e" strokeWidth="2" opacity="0.7" />
-								<Path d="M 95,185 Q 100,180 98,190" fill="none" stroke="#92400e" strokeWidth="1.5" opacity="0.6" />
-							</>
-						)}
-						{/* Label */}
-						<SvgText x="85" y="235" fontSize="8" fill="#94a3b8" textAnchor="middle">REAR TIRE</SvgText>
+						{/* Hub with status color */}
+						<Circle cx="85" cy="210" r="10" fill={getPartColor('tire_pressure')} opacity="0.9" />
+						<Circle cx="85" cy="210" r="6" fill="#374151" stroke="#6b7280" strokeWidth="1" />
+						{/* Axle bolt */}
+						<Circle cx="85" cy="210" r="3" fill="#9ca3af" />
 					</G>
 					
-					{/* === FRONT WHEEL - brake_check === */}
-					<G onPress={() => onPartPress('brake_check')}>
+					{/* === FRONT WHEEL === */}
+					<G>
 						{/* Outer tire */}
-						<Circle cx="295" cy="175" r="42" fill="url(#tireGrad)" stroke={getPartColor('brake_check')} strokeWidth="3" />
-						{/* Tire tread */}
-						<Circle cx="295" cy="175" r="38" fill="none" stroke="#4b5563" strokeWidth="4" strokeDasharray="6,4" />
+						<Circle cx="295" cy="210" r="48" fill="url(#tireGrad)" />
+						<Circle cx="295" cy="210" r="44" fill="none" stroke="#374151" strokeWidth="8" />
+						{/* Tread */}
+						{[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((angle, i) => (
+							<Line 
+								key={`ftread${i}`}
+								x1={295 + 40 * Math.cos(angle * Math.PI / 180)}
+								y1={210 + 40 * Math.sin(angle * Math.PI / 180)}
+								x2={295 + 48 * Math.cos(angle * Math.PI / 180)}
+								y2={210 + 48 * Math.sin(angle * Math.PI / 180)}
+								stroke="#4b5563"
+								strokeWidth="3"
+							/>
+						))}
 						{/* Rim */}
-						<Circle cx="295" cy="175" r="28" fill="none" stroke="#94a3b8" strokeWidth="2" />
-						<Circle cx="295" cy="175" r="20" fill="none" stroke="#64748b" strokeWidth="1" />
-						{/* Brake disc */}
-						<Circle cx="295" cy="175" r="16" fill="none" stroke={getPartColor('brake_check')} strokeWidth="3" />
-						{/* Hub */}
-						<Circle cx="295" cy="175" r="6" fill={getPartColor('brake_check')} />
+						<Circle cx="295" cy="210" r="32" fill="none" stroke="url(#chromeGrad)" strokeWidth="3" />
+						<Circle cx="295" cy="210" r="28" fill="none" stroke="#6b7280" strokeWidth="1" />
+						{/* Brake disc - colored by status */}
+						<Circle cx="295" cy="210" r="22" fill="none" stroke={getPartColor('brake_check')} strokeWidth="4" opacity="0.9" />
+						<Circle cx="295" cy="210" r="17" fill="none" stroke="#71717a" strokeWidth="1" strokeDasharray="3,2" />
 						{/* Spokes */}
 						{[0, 60, 120, 180, 240, 300].map((angle, i) => (
 							<Line 
 								key={`fspoke${i}`}
-								x1={295 + 8 * Math.cos(angle * Math.PI / 180)}
-								y1={175 + 8 * Math.sin(angle * Math.PI / 180)}
-								x2={295 + 26 * Math.cos(angle * Math.PI / 180)}
-								y2={175 + 26 * Math.sin(angle * Math.PI / 180)}
-								stroke="#94a3b8"
+								x1={295 + 6 * Math.cos(angle * Math.PI / 180)}
+								y1={210 + 6 * Math.sin(angle * Math.PI / 180)}
+								x2={295 + 28 * Math.cos(angle * Math.PI / 180)}
+								y2={210 + 28 * Math.sin(angle * Math.PI / 180)}
+								stroke="#9ca3af"
 								strokeWidth="1.5"
 							/>
 						))}
-						{/* Wear - brake marks */}
-						{getPartProgress('brake_check') > 50 && (
-							<Circle cx="295" cy="175" r="14" fill="none" stroke="#713f12" strokeWidth="2" strokeDasharray="3,3" opacity="0.6" />
-						)}
-						<SvgText x="295" y="235" fontSize="8" fill="#94a3b8" textAnchor="middle">BRAKES</SvgText>
+						{/* Hub with brake status */}
+						<Circle cx="295" cy="210" r="8" fill={getPartColor('brake_check')} opacity="0.8" />
+						<Circle cx="295" cy="210" r="4" fill="#374151" stroke="#6b7280" strokeWidth="1" />
 					</G>
 					
-					{/* === MAIN FRAME - wiring_harness === */}
-					<G onPress={() => onPartPress('wiring_harness')}>
-						{/* Main frame tubes */}
+					{/* === FRAME === */}
+					<G>
+						{/* Main backbone - colored by wiring status */}
 						<Path 
-							d="M 115,175 L 135,130 L 200,100 L 260,95 L 285,130" 
+							d="M 115,210 L 130,165 L 145,140 L 200,120 L 255,115 L 280,155" 
+							fill="none" 
+							stroke={getPartColor('wiring_harness')} 
+							strokeWidth="8" 
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							opacity="0.9"
+						/>
+						{/* Down tube */}
+						<Path 
+							d="M 145,140 L 160,195" 
 							fill="none" 
 							stroke={getPartColor('wiring_harness')} 
 							strokeWidth="6" 
 							strokeLinecap="round"
+							opacity="0.9"
 						/>
+						{/* Rear subframe */}
 						<Path 
-							d="M 135,130 L 150,175" 
+							d="M 130,165 L 100,160 L 95,130" 
 							fill="none" 
-							stroke={getPartColor('wiring_harness')} 
+							stroke="#52525b" 
 							strokeWidth="5" 
 							strokeLinecap="round"
 						/>
-						{/* Down tube */}
+						{/* Swingarm */}
 						<Path 
-							d="M 200,100 L 175,165" 
+							d="M 160,195 L 115,210 L 85,210" 
 							fill="none" 
-							stroke={getPartColor('wiring_harness')} 
+							stroke="#6b7280" 
+							strokeWidth="6" 
+							strokeLinecap="round"
+						/>
+					</G>
+					
+					{/* === ENGINE === */}
+					<G>
+						{/* Crankcase - colored by engine oil status */}
+						<Path 
+							d="M 145,165 L 145,200 L 200,200 L 200,160 L 175,145 L 145,155 Z" 
+							fill={getPartColor('engine_oil')} 
+							stroke="#4b5563" 
+							strokeWidth="1"
+							opacity="0.85"
+						/>
+						{/* Cylinder */}
+						<Rect x="155" y="130" width="35" height="30" rx="2" fill="#374151" stroke="#4b5563" strokeWidth="1" />
+						{/* Cylinder head - spark plug indicator */}
+						<Rect x="158" y="122" width="29" height="12" rx="2" fill={getPartColor('spark_plug')} stroke="#52525b" strokeWidth="1" opacity="0.9" />
+						{/* Cooling fins */}
+						{[135, 140, 145, 150, 155].map((y, i) => (
+							<Line key={`fin${i}`} x1="150" y1={y} x2="195" y2={y} stroke="#52525b" strokeWidth="2" />
+						))}
+						{/* Engine details */}
+						<Circle cx="172" cy="180" r="12" fill="none" stroke="#4b5563" strokeWidth="2" />
+						<Circle cx="172" cy="180" r="5" fill={getPartColor('engine_oil')} stroke="#52525b" strokeWidth="1" />
+						{/* Oil drain */}
+						<Rect x="165" y="195" width="14" height="6" rx="1" fill="#374151" stroke="#52525b" strokeWidth="1" />
+					</G>
+					
+					{/* === FUEL TANK === */}
+					<G>
+						<Path 
+							d="M 175,108 Q 200,90 240,95 Q 265,100 268,115 Q 265,130 240,135 Q 200,138 175,125 Q 168,118 175,108" 
+							fill={getPartColor('clutch_plates')}
+							stroke="#1e3a8a"
+							strokeWidth="1"
+							opacity="0.9"
+						/>
+						{/* Tank highlight */}
+						<Path d="M 190,100 Q 215,92 240,98" fill="none" stroke="#fff" strokeWidth="2" opacity="0.2" />
+						{/* Fuel cap */}
+						<Circle cx="220" cy="102" r="6" fill="#374151" stroke="#52525b" strokeWidth="2" />
+						<Circle cx="220" cy="102" r="3" fill="#4b5563" />
+					</G>
+					
+					{/* === SEAT === */}
+					<G>
+						<Path 
+							d="M 100,125 Q 110,115 140,112 Q 175,108 175,118 L 170,128 Q 140,135 100,135 Q 95,132 100,125" 
+							fill="url(#seatGrad)"
+							stroke="#44403c"
+							strokeWidth="1"
+						/>
+						{/* Seat stitching */}
+						<Path d="M 110,122 Q 130,118 160,120" fill="none" stroke="#57534e" strokeWidth="0.5" strokeDasharray="3,2" />
+					</G>
+					
+					{/* === BATTERY === */}
+					<G>
+						<Rect x="115" y="145" width="22" height="18" rx="2" fill={getPartColor('battery_water')} opacity="0.9" />
+						<Rect x="117" y="147" width="18" height="14" rx="1" fill="none" stroke="#fff" strokeWidth="0.5" opacity="0.3" />
+						{/* Terminals */}
+						<Rect x="119" y="142" width="4" height="4" rx="1" fill={getPartColor('battery_water')} />
+						<Rect x="129" y="142" width="4" height="4" rx="1" fill={getPartColor('battery_water')} />
+					</G>
+					
+					{/* === AIR FILTER === */}
+					<G>
+						<Ellipse cx="215" cy="135" rx="12" ry="8" fill={getPartColor('air_filter_clean')} opacity="0.9" />
+						<Ellipse cx="215" cy="135" rx="8" ry="5" fill="none" stroke="#fff" strokeWidth="0.5" opacity="0.3" />
+					</G>
+					
+					{/* === CARBURETOR === */}
+					<G>
+						<Rect x="200" y="150" width="14" height="18" rx="2" fill={getPartColor('carburetor')} opacity="0.9" />
+						<Rect x="202" y="152" width="10" height="14" rx="1" fill="none" stroke="#fff" strokeWidth="0.5" opacity="0.3" />
+						{/* Intake manifold */}
+						<Rect x="214" y="155" width="8" height="6" rx="1" fill={getPartColor('carburetor')} opacity="0.8" />
+					</G>
+					
+					{/* === FRONT FORK === */}
+					<G>
+						{/* Fork tubes - colored by suspension status */}
+						<Rect x="278" y="130" width="6" height="80" rx="2" fill={getPartColor('suspension')} opacity="0.9" />
+						<Rect x="290" y="130" width="6" height="80" rx="2" fill={getPartColor('suspension')} opacity="0.9" />
+						{/* Fork sliders */}
+						<Rect x="276" y="175" width="10" height="35" rx="2" fill="#52525b" />
+						<Rect x="288" y="175" width="10" height="35" rx="2" fill="#52525b" />
+						{/* Triple clamp */}
+						<Rect x="272" y="125" width="30" height="10" rx="3" fill="#4b5563" stroke="#6b7280" strokeWidth="1" />
+						<Rect x="275" y="155" width="24" height="6" rx="2" fill="#4b5563" />
+					</G>
+					
+					{/* === HANDLEBAR === */}
+					<G>
+						<Path 
+							d="M 268,118 Q 280,105 295,108 L 315,100 L 325,105 L 320,112 L 300,115 Q 285,118 275,120" 
+							fill="none" 
+							stroke={getPartColor('cables')} 
+							strokeWidth="5" 
+							strokeLinecap="round"
+							opacity="0.9"
+						/>
+						{/* Left grip */}
+						<Rect x="262" y="115" width="12" height="8" rx="3" fill="#1f2937" stroke="#374151" strokeWidth="1" />
+						{/* Right grip */}
+						<Rect x="318" y="100" width="14" height="8" rx="3" fill="#1f2937" stroke="#374151" strokeWidth="1" />
+						{/* Brake lever */}
+						<Path d="M 325,102 L 335,98 L 338,100" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" />
+					</G>
+					
+					{/* === HEADLIGHT === */}
+					<G>
+						<Circle cx="320" cy="125" r="12" fill="#fef3c7" stroke="#d4d4d8" strokeWidth="2" />
+						<Circle cx="320" cy="125" r="8" fill="#fef9c3" />
+						<Circle cx="320" cy="125" r="4" fill="#fefce8" />
+					</G>
+					
+					{/* === TAILLIGHT === */}
+					<G>
+						<Rect x="88" y="120" width="12" height="8" rx="2" fill="#fca5a5" stroke="#f87171" strokeWidth="1" />
+						<Rect x="90" y="122" width="3" height="4" rx="1" fill="#ef4444" />
+						<Rect x="95" y="122" width="3" height="4" rx="1" fill="#ef4444" />
+					</G>
+					
+					{/* === EXHAUST === */}
+					<G>
+						{/* Header pipe */}
+						<Path 
+							d="M 155,195 Q 140,200 120,205 Q 90,210 70,210" 
+							fill="none" 
+							stroke="#71717a" 
 							strokeWidth="4" 
 							strokeLinecap="round"
 						/>
-						{/* Wiring harness effect */}
-						{getPartProgress('wiring_harness') > 60 && (
-							<>
-								<Circle cx="170" cy="115" r="3" fill="#fbbf24" opacity="0.8" />
-								<Circle cx="230" cy="98" r="2" fill="#fbbf24" opacity="0.7" />
-							</>
-						)}
+						{/* Muffler */}
+						<Ellipse cx="55" cy="210" rx="18" ry="10" fill="#52525b" stroke="#71717a" strokeWidth="1" />
+						<Ellipse cx="55" cy="210" rx="14" ry="7" fill="#4b5563" />
+						{/* Exhaust tip */}
+						<Ellipse cx="38" cy="210" rx="4" ry="6" fill="#1f2937" stroke="#4b5563" strokeWidth="1" />
 					</G>
 					
-					{/* === ENGINE BLOCK - engine_oil === */}
-					<G onPress={() => onPartPress('engine_oil')}>
-						{/* Engine casing */}
-						<Rect x="145" y="130" width="55" height="45" rx="4" fill={getPartColor('engine_oil')} opacity="0.9" />
-						<Rect x="148" y="133" width="49" height="39" rx="3" fill="none" stroke="#fff" strokeWidth="1" opacity="0.3" />
-						{/* Cylinder head */}
-						<Rect x="155" y="118" width="35" height="15" rx="2" fill={getPartColor('engine_oil')} />
-						{/* Cooling fins */}
-						{[120, 124, 128, 132].map((y, i) => (
-							<Line key={`fin${i}`} x1="152" y1={y} x2="193" y2={y} stroke="#334155" strokeWidth="1" />
+					{/* === CHAIN === */}
+					<G>
+						{/* Rear sprocket - colored by chain status */}
+						<Circle cx="85" cy="210" r="16" fill="none" stroke={getPartColor('chain')} strokeWidth="4" opacity="0.9" />
+						{/* Sprocket teeth */}
+						{[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((angle, i) => (
+							<Line 
+								key={`rtooth${i}`}
+								x1={85 + 14 * Math.cos(angle * Math.PI / 180)}
+								y1={210 + 14 * Math.sin(angle * Math.PI / 180)}
+								x2={85 + 18 * Math.cos(angle * Math.PI / 180)}
+								y2={210 + 18 * Math.sin(angle * Math.PI / 180)}
+								stroke={getPartColor('chain')}
+								strokeWidth="2"
+								opacity="0.8"
+							/>
 						))}
-						{/* Oil fill cap */}
-						<Circle cx="185" cy="155" r="5" fill="#334155" stroke="#fff" strokeWidth="1" />
-						{/* Engine details */}
-						<Circle cx="160" cy="152" r="8" fill="none" stroke="#fff" strokeWidth="1" opacity="0.4" />
-						{/* Wear - oil stains */}
-						{getPartProgress('engine_oil') > 50 && (
-							<>
-								<Ellipse cx="155" cy="172" rx="8" ry="3" fill="#78350f" opacity="0.5" />
-								<Circle cx="190" cy="168" r="4" fill="#78350f" opacity="0.4" />
-							</>
-						)}
-						<SvgText x="172" y="190" fontSize="8" fill="#94a3b8" textAnchor="middle">ENGINE</SvgText>
-					</G>
-					
-					{/* === CHAIN - chain === */}
-					<G onPress={() => onPartPress('chain')}>
-						{/* Rear sprocket */}
-						<Circle cx="85" cy="175" r="14" fill="none" stroke={getPartColor('chain')} strokeWidth="3" />
 						{/* Front sprocket */}
-						<Circle cx="155" cy="165" r="10" fill="none" stroke={getPartColor('chain')} strokeWidth="3" />
-						{/* Chain path */}
+						<Circle cx="160" cy="195" r="10" fill={getPartColor('chain')} stroke="#6b7280" strokeWidth="2" opacity="0.8" />
+						{/* Chain links - top */}
 						<Path 
-							d="M 99,175 L 145,165" 
+							d="M 100,207 L 150,193" 
 							fill="none" 
 							stroke={getPartColor('chain')} 
 							strokeWidth="4"
 							strokeDasharray="4,2"
+							opacity="0.9"
 						/>
+						{/* Chain links - bottom */}
 						<Path 
-							d="M 71,175 Q 100,190 145,175 L 165,165" 
+							d="M 70,215 Q 110,225 150,200" 
 							fill="none" 
 							stroke={getPartColor('chain')} 
 							strokeWidth="3"
 							strokeDasharray="4,2"
 							opacity="0.7"
 						/>
-						{/* Wear - rust */}
-						{getPartProgress('chain') > 50 && (
-							<Path d="M 110,170 L 130,167" stroke="#a16207" strokeWidth="3" opacity="0.6" />
-						)}
 					</G>
 					
-					{/* === FUEL TANK - clutch_plates === */}
-					<G onPress={() => onPartPress('clutch_plates')}>
-						<Path 
-							d="M 185,85 Q 210,70 245,75 Q 265,80 265,95 Q 260,105 235,108 Q 200,110 185,100 Z" 
-							fill={getPartColor('clutch_plates')}
-							stroke="#fff"
-							strokeWidth="1"
-							opacity="0.9"
-						/>
-						{/* Tank cap */}
-						<Circle cx="220" cy="82" r="5" fill="#334155" stroke="#94a3b8" strokeWidth="1" />
-						{/* Highlight */}
-						<Path d="M 200,82 Q 215,75 235,78" fill="none" stroke="#fff" strokeWidth="1" opacity="0.4" />
-						<SvgText x="225" y="115" fontSize="7" fill="#94a3b8" textAnchor="middle">TANK</SvgText>
-					</G>
+					{/* === LABELS WITH POINTERS === */}
 					
-					{/* === SEAT === */}
-					<Path 
-						d="M 175,95 Q 195,85 230,87 Q 250,90 250,98 L 245,102 Q 210,105 175,100 Z" 
-						fill="#1f2937"
-						stroke="#374151"
-						strokeWidth="1"
-					/>
+					{/* Tire Pressure - rear wheel */}
+					<PartLabel x={85} y={240} labelX={25} labelY={280} label="TIRE PRESSURE" align="start" />
 					
-					{/* === CARBURETOR - carburetor === */}
-					<G onPress={() => onPartPress('carburetor')}>
-						<Rect x="195" y="135" width="18" height="22" rx="2" fill={getPartColor('carburetor')} />
-						<Rect x="198" y="138" width="12" height="16" rx="1" fill="none" stroke="#fff" strokeWidth="1" opacity="0.4" />
-						{/* Intake */}
-						<Rect x="213" y="142" width="12" height="8" rx="1" fill={getPartColor('carburetor')} opacity="0.8" />
-						<SvgText x="210" y="167" fontSize="6" fill="#94a3b8" textAnchor="middle">CARB</SvgText>
-					</G>
+					{/* Brakes - front wheel disc */}
+					<PartLabel x={295} y={195} labelX={355} labelY={175} label="BRAKES" align="end" />
 					
-					{/* === AIR FILTER - air_filter_clean === */}
-					<G onPress={() => onPartPress('air_filter_clean')}>
-						<Ellipse cx="235" cy="140" rx="15" ry="10" fill={getPartColor('air_filter_clean')} />
-						<Ellipse cx="235" cy="140" rx="11" ry="7" fill="none" stroke="#fff" strokeWidth="1" opacity="0.3" />
-						{/* Filter element lines */}
-						{[-6, -3, 0, 3, 6].map((offset, i) => (
-							<Line key={`filt${i}`} x1={229 + offset} y1="134" x2={229 + offset} y2="146" stroke="#fff" strokeWidth="0.5" opacity="0.3" />
-						))}
-						{/* Dirty filter */}
-						{getPartProgress('air_filter_clean') > 50 && (
-							<Ellipse cx="235" cy="140" rx="10" ry="6" fill="#78350f" opacity="0.4" />
-						)}
-					</G>
+					{/* Engine Oil */}
+					<PartLabel x={172} y={180} labelX={230} labelY={230} label="ENGINE OIL" align="start" />
 					
-					{/* === SPARK PLUG - spark_plug === */}
-					<G onPress={() => onPartPress('spark_plug')}>
-						<Rect x="167" y="105" width="8" height="14" rx="1" fill={getPartColor('spark_plug')} />
-						<Rect x="169" y="100" width="4" height="6" fill={getPartColor('spark_plug')} />
-						{/* Spark effect when good */}
-						{getPartProgress('spark_plug') < 30 && (
-							<>
-								<Line x1="165" y1="98" x2="160" y2="93" stroke="#fbbf24" strokeWidth="1.5" />
-								<Line x1="177" y1="98" x2="182" y2="93" stroke="#fbbf24" strokeWidth="1.5" />
-								<Line x1="171" y1="97" x2="171" y2="90" stroke="#fbbf24" strokeWidth="1.5" />
-							</>
-						)}
-					</G>
+					{/* Chain */}
+					<PartLabel x={125} y={200} labelX={75} labelY={240} label="CHAIN" align="start" />
 					
-					{/* === BATTERY - battery_water === */}
-					<G onPress={() => onPartPress('battery_water')}>
-						<Rect x="130" y="95" width="28" height="20" rx="2" fill={getPartColor('battery_water')} />
-						<Rect x="133" y="98" width="22" height="14" rx="1" fill="none" stroke="#fff" strokeWidth="1" opacity="0.3" />
-						{/* Terminals */}
-						<Rect x="137" y="91" width="4" height="5" fill={getPartColor('battery_water')} />
-						<Rect x="149" y="91" width="4" height="5" fill={getPartColor('battery_water')} />
-						<SvgText x="139" y="107" fontSize="6" fill="#fff" fontWeight="bold">+</SvgText>
-						<SvgText x="151" y="107" fontSize="6" fill="#fff" fontWeight="bold">-</SvgText>
-						{/* Low battery indicator */}
-						{getPartProgress('battery_water') > 60 && (
-							<Path d="M 135,112 L 155,100" stroke="#dc2626" strokeWidth="2" opacity="0.7" />
-						)}
-					</G>
+					{/* Battery */}
+					<PartLabel x={126} y={154} labelX={60} labelY={130} label="BATTERY" align="start" />
 					
-					{/* === FRONT FORK/SUSPENSION - suspension === */}
-					<G onPress={() => onPartPress('suspension')}>
-						{/* Fork tubes */}
-						<Rect x="280" y="100" width="6" height="75" rx="2" fill={getPartColor('suspension')} />
-						<Rect x="290" y="100" width="6" height="75" rx="2" fill={getPartColor('suspension')} />
-						{/* Fork spring detail */}
-						<Path d="M 283,110 L 283,165 M 293,110 L 293,165" stroke="#fff" strokeWidth="0.5" opacity="0.3" />
-						{/* Triple clamp */}
-						<Rect x="276" y="95" width="24" height="8" rx="2" fill="#64748b" />
-						{/* Wear - oil leak */}
-						{getPartProgress('suspension') > 60 && (
-							<Ellipse cx="288" cy="172" rx="6" ry="2" fill="#78350f" opacity="0.5" />
-						)}
-					</G>
+					{/* Spark Plug */}
+					<PartLabel x={172} y={125} labelX={125} labelY={95} label="SPARK PLUG" align="start" />
 					
-					{/* === HANDLEBAR & CABLES - cables === */}
-					<G onPress={() => onPartPress('cables')}>
-						{/* Handlebar */}
-						<Path 
-							d="M 275,85 Q 288,75 300,80 L 310,75 L 315,80 L 310,85" 
-							fill="none" 
-							stroke={getPartColor('cables')} 
-							strokeWidth="4" 
-							strokeLinecap="round"
-						/>
-						{/* Grips */}
-						<Rect x="305" y="72" width="12" height="8" rx="2" fill="#1f2937" />
-						<Rect x="270" y="82" width="10" height="6" rx="2" fill="#1f2937" />
-						{/* Cables */}
-						<Path d="M 285,88 Q 270,100 260,130" fill="none" stroke={getPartColor('cables')} strokeWidth="1.5" opacity="0.7" />
-						{/* Cable wear */}
-						{getPartProgress('cables') > 60 && (
-							<Circle cx="275" cy="100" r="3" fill="#a16207" opacity="0.7" />
-						)}
-					</G>
+					{/* Air Filter */}
+					<PartLabel x={215} y={135} labelX={250} labelY={75} label="AIR FILTER" align="start" />
 					
-					{/* === HEADLIGHT === */}
-					<Circle cx="315" cy="95" r="10" fill="#fef3c7" stroke="#94a3b8" strokeWidth="2" />
-					<Circle cx="315" cy="95" r="6" fill="#fef9c3" />
+					{/* Carburetor */}
+					<PartLabel x={207} y={159} labelX={255} labelY={185} label="CARBURETOR" align="start" />
 					
-					{/* === TAILLIGHT === */}
-					<Rect x="90" y="105" width="15" height="8" rx="2" fill="#fca5a5" stroke="#94a3b8" strokeWidth="1" />
+					{/* Suspension */}
+					<PartLabel x={287} y={155} labelX={340} labelY={130} label="SUSPENSION" align="end" />
 					
-					{/* === EXHAUST === */}
-					<Path 
-						d="M 145,170 L 80,175 L 70,178 Q 55,180 50,175 L 50,172 Q 55,168 70,170 L 145,165" 
-						fill="#475569" 
-						stroke="#64748b" 
-						strokeWidth="1"
-					/>
-					<Ellipse cx="50" cy="174" rx="4" ry="5" fill="#1f2937" />
+					{/* Cables */}
+					<PartLabel x={295} y={110} labelX={350} labelY={85} label="CABLES" align="end" />
+					
+					{/* Clutch / Tank */}
+					<PartLabel x={240} y={115} labelX={295} labelY={55} label="CLUTCH/TANK" align="end" />
+					
+					{/* Wiring */}
+					<PartLabel x={200} y={120} labelX={175} labelY={55} label="WIRING" align="start" />
 					
 				</Svg>
 			</View>
