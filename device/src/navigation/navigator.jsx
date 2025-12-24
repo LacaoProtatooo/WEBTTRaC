@@ -22,6 +22,7 @@ import Chat from '../screens/message/chat';
 import SickLeaveScreen from '../screens/common/SickLeaveScreen';
 import ForumScreen from '../screens/common/ForumScreen';
 import LostFoundScreen from '../screens/common/LostFoundScreen';
+import NotificationInbox from '../screens/common/notificationInbox';
 
 // Drawers
 import AppDrawer from '../components/common/appdrawer';
@@ -148,6 +149,7 @@ const Navigator = () => {
             <Stack.Screen name="SickLeave" component={SickLeaveScreen} />
             <Stack.Screen name="Forum" component={ForumScreen} />
             <Stack.Screen name="LostFound" component={LostFoundScreen} />
+            <Stack.Screen name="NotificationInbox" component={NotificationInbox} />
           </Stack.Navigator>
 
           {/* Drawer Overlay with Animation */}

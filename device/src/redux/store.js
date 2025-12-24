@@ -4,6 +4,7 @@ import userReducer from './reducers/userReducer';
 import notificationReducer from './reducers/notificationReducer';
 import messageReducer from './reducers/messageReducer';
 import operatorReducer from './reducers/operatorReducer';
+import announcementReducer from './reducers/announcementReducer';
 
 const store = configureStore({
   reducer: {
@@ -12,6 +13,7 @@ const store = configureStore({
     notifications: notificationReducer,
     messages: messageReducer,
     operator: operatorReducer,
+    announcements: announcementReducer,
   },
 });
 

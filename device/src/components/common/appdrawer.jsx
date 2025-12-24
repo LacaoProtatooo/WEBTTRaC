@@ -2,7 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity } from 'react-native';
 import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
-import { Avatar, Text, IconButton, Divider } from 'react-native-paper';
+import { Avatar, Text, IconButton, Divider, Drawer } from 'react-native-paper';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getUserCredentials } from '../../utils/userStorage';
@@ -143,19 +143,6 @@ const AppDrawer = ({ closeDrawer, navigation }) => {
                       closeDrawer();
                     }}
                   />
-                  {/* Comment ko lang since no need i access ng guest user ung operator interface */}
-                  {/* <DrawerItem
-                    icon={({ focused }) => renderIcon('settings-outline', focused)}
-                    label="Operator"
-                    labelStyle={styles.drawerLabel}
-                    activeBackgroundColor={`${colors.ivory4}CC`}
-                    activeTintColor={colors.primary}
-                    inactiveTintColor={colors.orangeShade8}
-                    onPress={() => {
-                      navigateSafe('OperatorScreen');
-                      closeDrawer();
-                    }}
-                  /> */}
                   <DrawerItem
                     icon={({ focused }) => renderIcon('alert-circle-outline', focused)}
                     label="About"
@@ -200,6 +187,19 @@ const AppDrawer = ({ closeDrawer, navigation }) => {
                     }}
                   />
 
+                  <DrawerItem
+                    icon={({ focused }) => renderIcon('chatbubble-ellipses-outline', focused)}
+                    label="Notifications"
+                    labelStyle={styles.drawerLabel}
+                    activeBackgroundColor={`${colors.ivory4}CC`}
+                    activeTintColor={colors.primary}
+                    inactiveTintColor={colors.orangeShade8}
+                    onPress={() => {
+                      navigateSafe('NotificationInbox');
+                      closeDrawer();
+                    }}
+                  />
+  
                   {/* Only show Operator for operators */}
                   {user.role === 'operator' && (
                     <DrawerItem

@@ -150,6 +150,10 @@ export const login = async (req, res) => {
       const token = generateTokenAndSetCookie(res, user);
       console.log(`Token generated successfully for user: ${user.email}`);
 
+      // Update last login date
+      user.lastLogin = new Date();
+      await user.save();
+
       res.status(200).json({
         success: true,
         message: user.role === 'operator' ? 'Logged in successfully as operator' : 'Logged in successfully as driver',

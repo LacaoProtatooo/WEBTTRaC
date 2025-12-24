@@ -94,6 +94,14 @@ const userSchema = new mongoose.Schema({
         ref: "Review",                           // Reference to the 'Review' model
         default: [],                             // Default empty array for no reviews
     },
+  lastLogin: {
+      type: Date,
+      default: Date.now,
+    },
+  readAnnouncements: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Announcement',
+    }],
 }, 
   { timestamps: true }
 );

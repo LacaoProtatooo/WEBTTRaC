@@ -13,6 +13,7 @@ import sickLeaveRoutes from '../routes/sickLeaveRoute.js';
 import forumRoutes from '../routes/forumRoute.js';
 import queueRoutes from '../routes/queueRoute.js';
 import lostFoundRoutes from '../routes/lostFoundRoute.js';
+import announcementRoute from '../routes/announcementRoute.js';
 
 const app = express();
 app.use(express.json());
@@ -47,6 +48,7 @@ app.use('/api/sick-leave', sickLeaveRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/lost-found', lostFoundRoutes);
+app.use('/api/announcements', announcementRoute);
 
 
 // Fallback for unknown routes
@@ -66,4 +68,4 @@ app.use((err, req, res, next) => {
     });
 });
 
-export default app; 
+export default app;
