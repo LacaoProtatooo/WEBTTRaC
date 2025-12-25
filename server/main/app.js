@@ -22,6 +22,8 @@ app.use(express.json());
 // Middleware for parsing request bodies
 app.use(cookieParser());
 const allowedOrigins = ['http://localhost:8081',
+    'http://localhost:5173', // Vite dev server for web admin
+    'http://localhost:3000', // Alternative web port
     // 'https://example.com',
 ];
 
@@ -33,7 +35,7 @@ app.use(cors({
 // Middleware for setting security headers
 app.use((req, res, next) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    // Removed Cross-Origin-Embedder-Policy as it blocks Firebase Google Sign-In popups
     next();
 });
 
