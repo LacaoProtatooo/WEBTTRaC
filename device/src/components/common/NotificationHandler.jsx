@@ -110,6 +110,7 @@ export default function NotificationHandler() {
       console.log('📲 Notification Tapped (Response):', JSON.stringify(response, null, 2));
       
       const data = response.notification.request.content.data;
+      const content = response.notification.request.content;
       
       // Navigate based on notification type
       if (navigationRef.isReady()) {
@@ -120,7 +121,24 @@ export default function NotificationHandler() {
             userName: data.senderName,
             userImage: data.senderImage,
           });
+        } else if (data?.type === 'announcement' && data?.announcementId) {
+          console.log('🚀 Navigating to notification detail:', data.announcementId);
+          // Navigate to detail screen with notification data from push
+          navigationRef.navigate('NotificationDetail', {
+            notification: {
+              _id: data.announcementId,
+              title: content.title,
+              message: content.body,
+              type: data.announcementType || 'info',
+              targetAudience: data.targetAudience || 'all',
+              scheduledDate: new Date().toISOString(),
+              isRead: false,
+              // Note: image and createdBy won't be available from push notification
+              // The detail screen will show what's available
+            },
+          });
         } else if (data?.type === 'announcement') {
+          // Fallback to inbox if no announcementId
           console.log('🚀 Navigating to notifications inbox');
           navigationRef.navigate('NotificationInbox');
         }

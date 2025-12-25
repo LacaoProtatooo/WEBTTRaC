@@ -7,6 +7,12 @@ import cloudinary from '../utils/cloudinaryConfig.js';
 // Helper function to send push notifications to users
 const sendAnnouncementNotifications = async (announcement, targetAudience) => {
   try {
+    // Check if messaging is available
+    if (!messaging) {
+      console.error('❌ Firebase messaging is not initialized. Push notifications disabled.');
+      return { success: false, error: 'Firebase messaging not initialized' };
+    }
+
     // Build query based on target audience
     let userQuery = { FCMToken: { $exists: true, $ne: null, $ne: '' } };
     
@@ -42,9 +48,13 @@ const sendAnnouncementNotifications = async (announcement, targetAudience) => {
     let successCount = 0;
     let failCount = 0;
 
+    console.log(`📢 Processing ${users.length} users for notification...`);
+
     // Send notifications in batches to avoid overloading
     for (const user of users) {
       try {
+        console.log(`📢 Sending to user ${user._id}, token: ${user.FCMToken?.substring(0, 20)}...`);
+        
         const notificationPayload = {
           token: user.FCMToken,
           notification: {
@@ -78,10 +88,12 @@ const sendAnnouncementNotifications = async (announcement, targetAudience) => {
           },
         };
 
-        await messaging.send(notificationPayload);
+        const messageId = await messaging.send(notificationPayload);
+        console.log(`✅ Notification sent successfully, messageId: ${messageId}`);
         successCount++;
       } catch (notifError) {
         failCount++;
+        console.error(`❌ Notification error for user ${user._id}:`, notifError.code, notifError.message);
         // If token is invalid, we might want to remove it from the user
         if (notifError.code === 'messaging/registration-token-not-registered' ||
             notifError.code === 'messaging/invalid-registration-token') {
@@ -320,6 +332,60 @@ export const getAllAnnouncements = async (req, res) => {
       announcements,
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Get single announcement by ID
+export const getAnnouncementById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    
+    console.log('📢 [getAnnouncementById] Fetching announcement:', id);
+    
+    const announcement = await Announcement.findById(id)
+      .populate('createdBy', 'username firstname lastname');
+
+    if (!announcement) {
+      return res.status(404).json({
+        success: false,
+        message: 'Announcement not found',
+      });
+    }
+
+    // Check if user has access to this announcement
+    const canAccess = announcement.targetAudience === 'all' || 
+                      announcement.targetAudience === userRole ||
+                      userRole === 'admin' ||
+                      userRole === 'operator';
+
+    if (!canAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have access to this announcement',
+      });
+    }
+
+    // Check read status for current user
+    const isRead = announcement.readBy.some(
+      read => read.user.toString() === req.user._id.toString()
+    );
+
+    console.log('📢 [getAnnouncementById] Found announcement:', announcement.title);
+
+    res.status(200).json({
+      success: true,
+      announcement: {
+        ...announcement.toObject(),
+        isRead,
+      },
+    });
+  } catch (error) {
+    console.error('📢 [getAnnouncementById] Error:', error.message);
     res.status(500).json({
       success: false,
       message: error.message,

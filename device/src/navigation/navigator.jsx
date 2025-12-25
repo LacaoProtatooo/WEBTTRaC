@@ -23,6 +23,7 @@ import SickLeaveScreen from '../screens/common/SickLeaveScreen';
 import ForumScreen from '../screens/common/ForumScreen';
 import LostFoundScreen from '../screens/common/LostFoundScreen';
 import NotificationInbox from '../screens/common/notificationInbox';
+import NotificationDetail from '../screens/common/notificationDetail';
 
 // Drawers
 import AppDrawer from '../components/common/appdrawer';
@@ -150,6 +151,7 @@ const Navigator = () => {
             <Stack.Screen name="Forum" component={ForumScreen} />
             <Stack.Screen name="LostFound" component={LostFoundScreen} />
             <Stack.Screen name="NotificationInbox" component={NotificationInbox} />
+            <Stack.Screen name="NotificationDetail" component={NotificationDetail} />
           </Stack.Navigator>
 
           {/* Drawer Overlay with Animation */}

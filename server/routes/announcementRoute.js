@@ -5,6 +5,7 @@ import {
   getActiveAnnouncements,
   getUnreadAnnouncements,
   getAllAnnouncements,
+  getAnnouncementById,
   updateAnnouncement,
   deleteAnnouncement,
   markAnnouncementAsRead,
@@ -30,6 +31,7 @@ router.post('/mark-all-read', authUser, markAllAnnouncementsAsRead);
 // Admin/Operator routes
 router.post('/', authUser, createAnnouncement);
 router.get('/all', authUser, getAllAnnouncements);
+router.get('/:id', authUser, getAnnouncementById);  // Get single announcement by ID
 router.put('/:id', authUser, updateAnnouncement);
 router.delete('/:id', authUser, deleteAnnouncement);
 

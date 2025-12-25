@@ -15,7 +15,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import {
   fetchInbox,
-  markAnnouncementAsRead,
   markAllAsRead,
 } from '../../redux/actions/announcementAction';
 import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
@@ -33,19 +32,11 @@ const NotificationInbox = ({ navigation }) => {
 
   const [filter, setFilter] = useState('all');
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
   const [imageLoading, setImageLoading] = useState({});
-  // Local optimistic state for read items to prevent UI flicker
-  const [localReadIds, setLocalReadIds] = useState(new Set());
 
   useEffect(() => {
     if (db) loadInbox();
   }, [filter, db]);
-
-  // Reset local read state when inbox changes (e.g., after refresh or filter change)
-  useEffect(() => {
-    setLocalReadIds(new Set());
-  }, [filter]);
 
   const loadInbox = async () => {
     if (!db) return;
@@ -54,28 +45,13 @@ const NotificationInbox = ({ navigation }) => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    setLocalReadIds(new Set());
     await loadInbox();
     setRefreshing(false);
   };
 
-  const handleToggleExpand = (id, isRead) => {
-    // First update expanded state
-    const newExpandedId = expandedId === id ? null : id;
-    setExpandedId(newExpandedId);
-    
-    // If not read, mark as read with optimistic UI update
-    if (!isRead && !localReadIds.has(id)) {
-      // Optimistically mark as read locally first to prevent flicker
-      setLocalReadIds(prev => new Set([...prev, id]));
-      // Then dispatch the actual API call
-      dispatch(markAnnouncementAsRead(db, id));
-    }
-  };
-
-  // Helper to check if item is read (combines server state + local optimistic state)
-  const isItemRead = (item) => {
-    return item.isRead || localReadIds.has(item._id);
+  const handleNotificationPress = (item) => {
+    // Navigate to detail screen
+    navigation.navigate('NotificationDetail', { notification: item });
   };
 
   const getIconAndColor = (type) => {
@@ -104,20 +80,35 @@ const NotificationInbox = ({ navigation }) => {
     }
   };
 
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now - date;
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    
+    if (days === 0) {
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    } else if (days === 1) {
+      return 'Yesterday';
+    } else if (days < 7) {
+      return `${days} days ago`;
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  };
+
   const renderItem = ({ item }) => {
     const { icon, color } = getIconAndColor(item.type);
-    const isExpanded = expandedId === item._id;
     const hasImage = item.image?.url;
-    const isRead = isItemRead(item);
 
     return (
       <TouchableOpacity
         style={[
           styles.notificationCard,
-          !isRead && styles.unreadCard,
+          !item.isRead && styles.unreadCard,
           hasImage && styles.articleCard,
         ]}
-        onPress={() => handleToggleExpand(item._id, isRead)}
+        onPress={() => handleNotificationPress(item)}
         activeOpacity={0.85}
       >
         {/* Featured Image (Article Style) */}
@@ -140,6 +131,11 @@ const NotificationInbox = ({ navigation }) => {
               <Ionicons name={icon} size={12} color="#fff" />
               <Text style={styles.typeBadgeText}>{getTypeLabel(item.type)}</Text>
             </View>
+            {!item.isRead && (
+              <View style={styles.unreadIndicator}>
+                <View style={styles.unreadDotLarge} />
+              </View>
+            )}
           </View>
         )}
 
@@ -148,17 +144,11 @@ const NotificationInbox = ({ navigation }) => {
             {!hasImage && <Ionicons name={icon} size={24} color={color} />}
 
             <View style={[styles.headerContent, hasImage && styles.headerContentFull]}>
-              <Text style={[styles.title, hasImage && styles.articleTitle]} numberOfLines={isExpanded ? 0 : 2}>
+              <Text style={[styles.title, hasImage && styles.articleTitle]} numberOfLines={2}>
                 {item.title}
               </Text>
               <View style={styles.metaRow}>
-                <Text style={styles.date}>
-                  {new Date(item.scheduledDate).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  })}
-                </Text>
+                <Text style={styles.date}>{formatDate(item.scheduledDate)}</Text>
                 {!hasImage && (
                   <View style={[styles.typeIndicator, { backgroundColor: color + '20' }]}>
                     <Text style={[styles.typeText, { color }]}>{getTypeLabel(item.type)}</Text>
@@ -167,40 +157,19 @@ const NotificationInbox = ({ navigation }) => {
               </View>
             </View>
 
-            {!isRead && <View style={styles.unreadDot} />}
+            {!item.isRead && !hasImage && <View style={styles.unreadDot} />}
           </View>
 
-          {/* Preview text when not expanded */}
-          {!isExpanded && !hasImage && (
-            <Text style={styles.previewText} numberOfLines={2}>
-              {item.message}
-            </Text>
-          )}
+          {/* Preview text */}
+          <Text style={styles.previewText} numberOfLines={2}>
+            {item.message}
+          </Text>
 
-          {/* Expanded Content */}
-          {isExpanded && (
-            <View style={styles.messageContainer}>
-              <Text style={styles.message}>{item.message}</Text>
-              {item.createdBy && (
-                <View style={styles.authorContainer}>
-                  <Ionicons name="person-circle-outline" size={16} color={colors.orangeShade8} />
-                  <Text style={styles.author}>
-                    {item.createdBy.firstname} {item.createdBy.lastname}
-                  </Text>
-                </View>
-              )}
-              <View style={styles.expandedFooter}>
-                <Text style={styles.tapHint}>Tap to collapse</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Tap to expand hint */}
-          {!isExpanded && (
-            <View style={styles.expandHint}>
-              <Ionicons name="chevron-down" size={16} color={colors.placeholder} />
-            </View>
-          )}
+          {/* Tap to view hint */}
+          <View style={styles.viewHint}>
+            <Text style={styles.viewHintText}>Tap to read more</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.placeholder} />
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -259,7 +228,6 @@ const NotificationInbox = ({ navigation }) => {
           data={inbox}
           renderItem={renderItem}
           keyExtractor={(item) => item._id}
-          extraData={{ expandedId, localReadIds: localReadIds.size }}
           contentContainerStyle={{ padding: spacing.medium }}
           refreshControl={
             <RefreshControl
@@ -465,6 +433,21 @@ const styles = StyleSheet.create({
     marginLeft: spacing.small,
   },
 
+  unreadIndicator: {
+    position: 'absolute',
+    top: spacing.small,
+    right: spacing.small,
+  },
+
+  unreadDotLarge: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.primary,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+
   previewText: {
     marginTop: spacing.small,
     fontSize: 13,
@@ -472,45 +455,17 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  messageContainer: {
-    marginTop: spacing.medium,
-    paddingTop: spacing.medium,
-    borderTopWidth: 1,
-    borderTopColor: colors.ivory3,
-  },
-
-  message: {
-    fontSize: 14,
-    color: colors.text,
-    lineHeight: 22,
-  },
-
-  authorContainer: {
+  viewHint: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.medium,
-    gap: 6,
-  },
-
-  author: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    color: colors.orangeShade8,
-  },
-
-  expandedFooter: {
-    marginTop: spacing.medium,
-    alignItems: 'center',
-  },
-
-  tapHint: {
-    fontSize: 11,
-    color: colors.placeholder,
-  },
-
-  expandHint: {
-    alignItems: 'center',
+    justifyContent: 'flex-end',
     marginTop: spacing.small,
+    gap: 4,
+  },
+
+  viewHintText: {
+    fontSize: 12,
+    color: colors.placeholder,
   },
 
   emptyContainer: {

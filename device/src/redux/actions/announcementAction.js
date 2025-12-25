@@ -181,3 +181,27 @@ export const fetchUnreadCount = (db) => async (dispatch) => {
     return 0;
   }
 };
+
+// Fetch a single announcement by ID (for direct navigation from push notification)
+export const fetchAnnouncementById = async (db, announcementId) => {
+  try {
+    if (!db) throw new Error('Database not initialized');
+    const token = await getToken(db);
+    if (!token) throw new Error('No authentication token found. Please login again.');
+    
+    console.log('📢 [fetchAnnouncementById] Fetching announcement:', announcementId);
+    
+    const response = await axios.get(
+      `${apiURL}/api/announcements/${announcementId}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    console.log('📢 [fetchAnnouncementById] Response:', response.data);
+    return response.data.announcement;
+  } catch (error) {
+    console.error('❌ [fetchAnnouncementById] Error:', error.response?.data || error.message);
+    return null;
+  }
+};
