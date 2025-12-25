@@ -58,8 +58,9 @@ export default function NotificationHandler() {
 
   // Notification listeners
   useEffect(() => {
-    // Create and log notification channel on Android
+    // Create and log notification channels on Android
     if (Platform.OS === 'android') {
+      // Messages channel
       Notifications.setNotificationChannelAsync('default', {
         name: 'Messages',
         importance: Notifications.AndroidImportance.MAX,
@@ -68,9 +69,24 @@ export default function NotificationHandler() {
         lightColor: '#FF231F7C',
         showBadge: true,
       }).then(channel => {
-        console.log('Notification Channel created:', channel);
+        console.log('Messages Notification Channel created:', channel);
       }).catch(error => {
-        console.error('Error creating notification channel:', error);
+        console.error('Error creating messages notification channel:', error);
+      });
+
+      // Announcements channel
+      Notifications.setNotificationChannelAsync('announcements', {
+        name: 'Announcements',
+        description: 'Important announcements from TricycleMOD',
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: 'default',
+        vibrationPattern: [0, 500, 250, 500],
+        lightColor: '#3B82F6',
+        showBadge: true,
+      }).then(channel => {
+        console.log('Announcements Notification Channel created:', channel);
+      }).catch(error => {
+        console.error('Error creating announcements notification channel:', error);
       });
     }
 
@@ -78,12 +94,14 @@ export default function NotificationHandler() {
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
       console.log('🔔 Foreground Notification Received:', JSON.stringify(notification, null, 2));
       
-      // You can show an in-app banner here if you want
-      const { type, senderName, text } = notification.request.content.data || {};
+      const { type, senderName, text, announcementType } = notification.request.content.data || {};
       
       if (type === 'message') {
         console.log(`💬 New message from ${senderName}: ${text}`);
         // Optional: Show custom in-app notification UI
+      } else if (type === 'announcement') {
+        console.log(`📢 New announcement (${announcementType}): ${notification.request.content.title}`);
+        // The notification will show automatically, user can tap to see more
       }
     });
 
@@ -93,20 +111,21 @@ export default function NotificationHandler() {
       
       const data = response.notification.request.content.data;
       
-      // Navigate to chat screen when notification is tapped
-      if (data?.type === 'message' && data?.senderId) {
-        console.log('🚀 Navigating to chat with user:', data.senderName);
-        
-        // Use navigationRef instead of navigation hook
-        if (navigationRef.isReady()) {
+      // Navigate based on notification type
+      if (navigationRef.isReady()) {
+        if (data?.type === 'message' && data?.senderId) {
+          console.log('🚀 Navigating to chat with user:', data.senderName);
           navigationRef.navigate('Chat', {
             userId: data.senderId,
             userName: data.senderName,
             userImage: data.senderImage,
           });
-        } else {
-          console.warn('Navigation not ready yet');
+        } else if (data?.type === 'announcement') {
+          console.log('🚀 Navigating to notifications inbox');
+          navigationRef.navigate('NotificationInbox');
         }
+      } else {
+        console.warn('Navigation not ready yet');
       }
     });
 

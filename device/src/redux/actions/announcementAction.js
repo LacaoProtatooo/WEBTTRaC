@@ -66,25 +66,31 @@ export const fetchInbox = (db, filter = 'all') => async (dispatch) => {
     dispatch({ type: FETCH_INBOX_REQUEST });
     
     if (!db) {
-      console.error('Database not initialized');
+      console.error('❌ [fetchInbox] Database not initialized');
       throw new Error('Database not initialized');
     }
     
-    console.log('Getting token from database for inbox...');
+    console.log('📬 [fetchInbox] Getting token from database...');
     const token = await getToken(db);
-    console.log('Token retrieved:', token ? `${token.substring(0, 20)}...` : 'null');
+    console.log('📬 [fetchInbox] Token retrieved:', token ? `${token.substring(0, 20)}...` : 'null');
     
     if (!token) {
-      console.error('No authentication token found');
+      console.error('❌ [fetchInbox] No authentication token found');
       throw new Error('No authentication token found. Please login again.');
     }
     
-    const response = await axios.get(
-      `${apiURL}/api/announcements/inbox?filter=${filter}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
+    const url = `${apiURL}/api/announcements/inbox?filter=${filter}`;
+    console.log('📬 [fetchInbox] Fetching from:', url);
+    
+    const response = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    console.log('📬 [fetchInbox] Response:', {
+      success: response.data.success,
+      announcementsCount: response.data.announcements?.length,
+      unreadCount: response.data.unreadCount,
+    });
 
     dispatch({
       type: FETCH_INBOX_SUCCESS,
@@ -96,7 +102,7 @@ export const fetchInbox = (db, filter = 'all') => async (dispatch) => {
 
     return response.data;
   } catch (error) {
-    console.error('❌ Error in fetchInbox:', error);
+    console.error('❌ [fetchInbox] Error:', error.response?.data || error.message);
     dispatch({
       type: FETCH_INBOX_FAILURE,
       payload: error.response?.data?.message || error.message || 'Failed to fetch inbox',

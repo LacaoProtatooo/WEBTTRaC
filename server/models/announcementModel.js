@@ -10,9 +10,20 @@ const announcementSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  image: {
+    public_id: {
+      type: String,
+      required: false,
+    },
+    url: {
+      type: String,
+      required: false,
+    },
+  },
   scheduledDate: {
     type: Date,
     required: true,
+    default: Date.now,
   },
   expiryDate: {
     type: Date,
