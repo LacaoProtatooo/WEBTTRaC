@@ -1,5 +1,5 @@
 // device/src/screens/common/notificationInbox.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,12 @@ import {
 import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
 import { colors, spacing, fonts } from '../../components/common/theme';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import axios from 'axios';
+import Constants from 'expo-constants';
+import { getToken } from '../../utils/jwtStorage';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const BASE_URL = Constants.expoConfig.extra?.BACKEND_URL || 'http://192.168.254.105:5000';
 
 const NotificationInbox = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -29,18 +33,155 @@ const NotificationInbox = ({ navigation }) => {
   const { inbox, unreadCount, loading } = useSelector(
     (state) => state.announcements
   );
+  const { currentUser } = useSelector((state) => state.user);
 
   const [filter, setFilter] = useState('all');
   const [refreshing, setRefreshing] = useState(false);
   const [imageLoading, setImageLoading] = useState({});
+  const [licenseData, setLicenseData] = useState(null);
+  const [dismissedNotices, setDismissedNotices] = useState([]);
 
   useEffect(() => {
     if (db) loadInbox();
   }, [filter, db]);
 
+  useEffect(() => {
+    if (currentUser?.role === 'driver' && db) {
+      fetchLicenseData();
+    }
+  }, [currentUser, db]);
+
+  const fetchLicenseData = async () => {
+    if (!currentUser?._id) return;
+    try {
+      const token = await getToken(db);
+      const response = await axios.get(`${BASE_URL}/api/license/${currentUser._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.data.success && response.data.license) {
+        setLicenseData(response.data.license);
+      }
+    } catch (error) {
+      console.log("No license found:", error.message);
+      setLicenseData(null);
+    }
+  };
+
+  // Generate system notices for incomplete profile/license
+  const systemNotices = useMemo(() => {
+    if (!currentUser) return [];
+    
+    const notices = [];
+    const missingFields = [];
+    
+    // Check common profile fields for all users
+    if (!currentUser.phone) missingFields.push('Phone Number');
+    if (!currentUser.image?.url) missingFields.push('Profile Picture');
+    if (!currentUser.address?.street && !currentUser.address?.city) missingFields.push('Address');
+    
+    // Create profile notice if there are missing fields
+    if (missingFields.length > 0 && !dismissedNotices.includes('profile_incomplete')) {
+      notices.push({
+        _id: 'system_profile_incomplete',
+        type: 'warning',
+        title: 'Complete Your Profile',
+        message: `Your profile is missing: ${missingFields.join(', ')}. Complete your profile to enjoy all features.`,
+        isSystemNotice: true,
+        noticeType: 'profile_incomplete',
+        scheduledDate: new Date().toISOString(),
+        isRead: false,
+        actionRoute: 'Account',
+      });
+    }
+    
+    // Check license for drivers only
+    if (currentUser.role === 'driver') {
+      if (!licenseData && !dismissedNotices.includes('license_missing')) {
+        notices.push({
+          _id: 'system_license_missing',
+          type: 'urgent',
+          title: 'Driver License Required',
+          message: 'Please upload your driver license to continue accepting trips. Go to Account > License to upload.',
+          isSystemNotice: true,
+          noticeType: 'license_missing',
+          scheduledDate: new Date().toISOString(),
+          isRead: false,
+          actionRoute: 'Account',
+        });
+      } else if (licenseData && !licenseData.isVerified && !dismissedNotices.includes('license_unverified')) {
+        notices.push({
+          _id: 'system_license_unverified',
+          type: 'warning',
+          title: 'License Pending Verification',
+          message: 'Your driver license has been uploaded but is pending verification. You may experience limited access until verified.',
+          isSystemNotice: true,
+          noticeType: 'license_unverified',
+          scheduledDate: new Date().toISOString(),
+          isRead: false,
+          actionRoute: 'Account',
+        });
+      } else if (licenseData?.expiryDate) {
+        const expiryDate = new Date(licenseData.expiryDate);
+        const today = new Date();
+        const daysUntilExpiry = Math.floor((expiryDate - today) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntilExpiry < 0 && !dismissedNotices.includes('license_expired')) {
+          notices.push({
+            _id: 'system_license_expired',
+            type: 'urgent',
+            title: 'License Expired',
+            message: 'Your driver license has expired. Please renew your license and update your records in the Account section.',
+            isSystemNotice: true,
+            noticeType: 'license_expired',
+            scheduledDate: new Date().toISOString(),
+            isRead: false,
+            actionRoute: 'Account',
+          });
+        } else if (daysUntilExpiry >= 0 && daysUntilExpiry <= 30 && !dismissedNotices.includes('license_expiring_soon')) {
+          notices.push({
+            _id: 'system_license_expiring',
+            type: 'warning',
+            title: 'License Expiring Soon',
+            message: `Your driver license will expire in ${daysUntilExpiry} days. Consider renewing it soon to avoid service interruption.`,
+            isSystemNotice: true,
+            noticeType: 'license_expiring_soon',
+            scheduledDate: new Date().toISOString(),
+            isRead: false,
+            actionRoute: 'Account',
+          });
+        }
+      }
+    }
+    
+    return notices;
+  }, [currentUser, licenseData, dismissedNotices]);
+
+  // Combine system notices with server announcements
+  const combinedNotifications = useMemo(() => {
+    let notifications = [...systemNotices, ...inbox];
+    
+    // Apply filter
+    if (filter === 'unread') {
+      notifications = notifications.filter(n => !n.isRead);
+    } else if (filter === 'read') {
+      notifications = notifications.filter(n => n.isRead);
+    }
+    
+    return notifications;
+  }, [systemNotices, inbox, filter]);
+
+  // Calculate total unread including system notices
+  const totalUnreadCount = useMemo(() => {
+    const systemUnread = systemNotices.filter(n => !n.isRead).length;
+    return unreadCount + systemUnread;
+  }, [unreadCount, systemNotices]);
+
   const loadInbox = async () => {
     if (!db) return;
     await dispatch(fetchInbox(db, filter));
+    if (currentUser?.role === 'driver') {
+      await fetchLicenseData();
+    }
   };
 
   const onRefresh = async () => {
@@ -50,8 +191,19 @@ const NotificationInbox = ({ navigation }) => {
   };
 
   const handleNotificationPress = (item) => {
-    // Navigate to detail screen
+    // Handle system notices
+    if (item.isSystemNotice) {
+      if (item.actionRoute) {
+        navigation.navigate(item.actionRoute);
+      }
+      return;
+    }
+    // Navigate to detail screen for regular announcements
     navigation.navigate('NotificationDetail', { notification: item });
+  };
+
+  const handleDismissNotice = (noticeType) => {
+    setDismissedNotices(prev => [...prev, noticeType]);
   };
 
   const getIconAndColor = (type) => {
@@ -100,6 +252,38 @@ const NotificationInbox = ({ navigation }) => {
   const renderItem = ({ item }) => {
     const { icon, color } = getIconAndColor(item.type);
     const hasImage = item.image?.url;
+
+    // Render system notice with special styling
+    if (item.isSystemNotice) {
+      return (
+        <View style={[styles.systemNoticeCard, { borderLeftColor: color }]}>
+          <View style={styles.systemNoticeHeader}>
+            <View style={[styles.systemNoticeIcon, { backgroundColor: color + '20' }]}>
+              <Ionicons name={icon} size={24} color={color} />
+            </View>
+            <TouchableOpacity 
+              style={styles.dismissButton}
+              onPress={() => handleDismissNotice(item.noticeType)}
+            >
+              <Ionicons name="close" size={18} color={colors.placeholder} />
+            </TouchableOpacity>
+          </View>
+          
+          <Text style={styles.systemNoticeTitle}>{item.title}</Text>
+          <Text style={styles.systemNoticeMessage}>{item.message}</Text>
+          
+          <TouchableOpacity 
+            style={[styles.systemNoticeAction, { backgroundColor: color }]}
+            onPress={() => handleNotificationPress(item)}
+          >
+            <Text style={styles.systemNoticeActionText}>
+              {item.noticeType.includes('license') ? 'Go to License' : 'Complete Profile'}
+            </Text>
+            <Ionicons name="arrow-forward" size={16} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      );
+    }
 
     return (
       <TouchableOpacity
@@ -186,7 +370,7 @@ const NotificationInbox = ({ navigation }) => {
 
         <Text style={styles.headerTitle}>Notifications</Text>
 
-        {unreadCount > 0 && (
+        {totalUnreadCount > 0 && (
           <TouchableOpacity onPress={() => dispatch(markAllAsRead(db))}>
             <Text style={styles.markAllRead}>Mark all</Text>
           </TouchableOpacity>
@@ -211,7 +395,7 @@ const NotificationInbox = ({ navigation }) => {
               ]}
             >
               {key.toUpperCase()}
-              {key === 'unread' && unreadCount > 0 && ` (${unreadCount})`}
+              {key === 'unread' && totalUnreadCount > 0 && ` (${totalUnreadCount})`}
             </Text>
           </TouchableOpacity>
         ))}
@@ -225,7 +409,7 @@ const NotificationInbox = ({ navigation }) => {
         />
       ) : (
         <FlatList
-          data={inbox}
+          data={combinedNotifications}
           renderItem={renderItem}
           keyExtractor={(item) => item._id}
           contentContainerStyle={{ padding: spacing.medium }}
@@ -477,6 +661,69 @@ const styles = StyleSheet.create({
     marginTop: spacing.small,
     color: colors.placeholder,
     fontSize: 16,
+  },
+
+  // System Notice Styles
+  systemNoticeCard: {
+    backgroundColor: colors.ivory1,
+    borderRadius: 12,
+    marginBottom: spacing.medium,
+    padding: spacing.medium,
+    borderLeftWidth: 4,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+
+  systemNoticeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.small,
+  },
+
+  systemNoticeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  dismissButton: {
+    padding: 4,
+  },
+
+  systemNoticeTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 6,
+  },
+
+  systemNoticeMessage: {
+    fontSize: 13,
+    color: colors.placeholder,
+    lineHeight: 20,
+    marginBottom: spacing.medium,
+  },
+
+  systemNoticeAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 8,
+  },
+
+  systemNoticeActionText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

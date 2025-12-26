@@ -14,6 +14,7 @@ import forumRoutes from '../routes/forumRoute.js';
 import queueRoutes from '../routes/queueRoute.js';
 import lostFoundRoutes from '../routes/lostFoundRoute.js';
 import announcementRoute from '../routes/announcementRoute.js';
+import bookingRoutes from '../routes/bookingRoute.js';
 
 const app = express();
 
@@ -26,11 +27,20 @@ app.use(cookieParser());
 const allowedOrigins = ['http://localhost:8081',
     'http://localhost:5173', // Vite dev server for web admin
     'http://localhost:3000', // Alternative web port
+    'http://192.168.254.105:8081', // Expo dev client
     // 'https://example.com',
 ];
 
 app.use(cors({
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, Postman, etc.)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(null, true); // Allow all origins for development
+        }
+    },
     credentials: true,
 }));
 
@@ -53,6 +63,7 @@ app.use('/api/forum', forumRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/lost-found', lostFoundRoutes);
 app.use('/api/announcements', announcementRoute);
+app.use('/api/booking', bookingRoutes);
 
 
 // Fallback for unknown routes

@@ -19,6 +19,7 @@ import MapsTab from '../dashboard/MapsTab';
 import ChatMenu from '../message/chatMenu';
 import LostFoundScreen from './LostFoundScreen';
 import GuestMain from '../guest/main';
+import DriverBookingScreen from '../driver/DriverBookingScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -86,6 +87,19 @@ const Home = () => {
             ) 
           }}
         />
+        {/* Driver Booking Tab - Only for drivers */}
+        {currentUser?.role === 'driver' && (
+          <Tab.Screen
+            name="Booking"
+            component={DriverBookingScreen}
+            options={{ 
+              title: 'Trips',
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="car-sport-outline" size={size} color={color} />
+              ) 
+            }}
+          />
+        )}
         <Tab.Screen
           name="Maps"
           component={MapsTab}

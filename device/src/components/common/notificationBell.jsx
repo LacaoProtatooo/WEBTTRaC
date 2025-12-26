@@ -1,18 +1,25 @@
 // Add this component wherever you want the notification bell (header, drawer, etc.)
 // device/src/components/common/notificationBell.jsx
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigation } from '@react-navigation/native';
 import { fetchUnreadCount } from '../../redux/actions/announcementAction';
 import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
+import axios from 'axios';
+import Constants from 'expo-constants';
+import { getToken } from '../../utils/jwtStorage';
+
+const BASE_URL = Constants.expoConfig.extra?.BACKEND_URL || 'http://192.168.254.105:5000';
 
 const NotificationBell = () => {
   const navigation = useNavigation();
   const dispatch = useDispatch();
   const db = useAsyncSQLiteContext();
   const { unreadCount } = useSelector((state) => state.announcements);
+  const { currentUser } = useSelector((state) => state.user);
+  const [licenseData, setLicenseData] = useState(null);
 
   useEffect(() => {
     if (!db) return;
@@ -28,16 +35,70 @@ const NotificationBell = () => {
     return () => clearInterval(interval);
   }, [db, dispatch]);
 
+  useEffect(() => {
+    if (currentUser?.role === 'driver' && db) {
+      fetchLicenseData();
+    }
+  }, [currentUser, db]);
+
+  const fetchLicenseData = async () => {
+    if (!currentUser?._id) return;
+    try {
+      const token = await getToken(db);
+      const response = await axios.get(`${BASE_URL}/api/license/${currentUser._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.data.success && response.data.license) {
+        setLicenseData(response.data.license);
+      }
+    } catch (error) {
+      setLicenseData(null);
+    }
+  };
+
+  // Calculate system notices count
+  const systemNoticesCount = useMemo(() => {
+    if (!currentUser) return 0;
+    
+    let count = 0;
+    
+    // Check common profile fields
+    if (!currentUser.phone || !currentUser.image?.url || 
+        (!currentUser.address?.street && !currentUser.address?.city)) {
+      count++;
+    }
+    
+    // Check license for drivers
+    if (currentUser.role === 'driver') {
+      if (!licenseData) {
+        count++;
+      } else if (!licenseData.isVerified) {
+        count++;
+      } else if (licenseData.expiryDate) {
+        const expiryDate = new Date(licenseData.expiryDate);
+        const today = new Date();
+        const daysUntilExpiry = Math.floor((expiryDate - today) / (1000 * 60 * 60 * 24));
+        if (daysUntilExpiry <= 30) {
+          count++;
+        }
+      }
+    }
+    
+    return count;
+  }, [currentUser, licenseData]);
+
+  const totalUnread = unreadCount + systemNoticesCount;
+
   return (
     <TouchableOpacity
       style={styles.container}
       onPress={() => navigation.navigate('NotificationInbox')}
     >
       <Ionicons name="notifications-outline" size={24} color="#000" />
-      {unreadCount > 0 && (
+      {totalUnread > 0 && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>
-            {unreadCount > 99 ? '99+' : unreadCount}
+            {totalUnread > 99 ? '99+' : totalUnread}
           </Text>
         </View>
       )}

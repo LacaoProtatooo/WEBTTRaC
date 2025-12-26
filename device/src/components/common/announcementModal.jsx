@@ -34,28 +34,40 @@ const AnnouncementModal = ({ visible, announcements, onClose }) => {
       <View style={styles.overlay}>
         <View style={styles.modalContainer}>
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Announcements</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#000" />
+            <View style={styles.headerTitleContainer}>
+              <Ionicons name="megaphone" size={24} color="#3B82F6" />
+              <Text style={styles.headerTitle}>Announcements</Text>
+            </View>
+            <TouchableOpacity onPress={onClose} style={styles.closeIcon}>
+              <Ionicons name="close" size={24} color="#6B7280" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
             {announcements.map((announcement) => {
               const { icon, color } = getIconAndColor(announcement.type);
               return (
-                <View key={announcement._id} style={styles.announcementCard}>
+                <View key={announcement._id} style={[styles.announcementCard, { borderLeftColor: color }]}>
                   <View style={styles.announcementHeader}>
-                    <Ionicons name={icon} size={24} color={color} />
-                    <Text style={styles.announcementTitle}>
-                      {announcement.title}
-                    </Text>
+                    <View style={[styles.iconContainer, { backgroundColor: `${color}15` }]}>
+                      <Ionicons name={icon} size={24} color={color} />
+                    </View>
+                    <View style={styles.titleContainer}>
+                      <Text style={styles.announcementTitle} numberOfLines={2}>
+                        {announcement.title}
+                      </Text>
+                      <Text style={styles.announcementType}>
+                        {announcement.type?.toUpperCase() || 'INFO'}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.announcementMessage}>
-                    {announcement.message}
-                  </Text>
                   <Text style={styles.announcementDate}>
-                    {new Date(announcement.scheduledDate).toLocaleDateString()}
+                    {new Date(announcement.scheduledDate).toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric'
+                    })}
                   </Text>
                 </View>
               );
@@ -80,61 +92,93 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 16,
     width: '90%',
-    maxHeight: '80%',
+    maxHeight: '70%',
     padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  closeIcon: {
+    padding: 4,
   },
   content: {
-    maxHeight: 400,
+    maxHeight: 350,
   },
   announcementCard: {
-    backgroundColor: '#F3F4F6',
-    padding: 15,
-    borderRadius: 8,
-    marginBottom: 15,
+    backgroundColor: '#F9FAFB',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
   },
   announcementHeader: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  iconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginRight: 12,
+  },
+  titleContainer: {
+    flex: 1,
   },
   announcementTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 10,
-    flex: 1,
+    fontWeight: '700',
+    color: '#1F2937',
+    lineHeight: 22,
+    marginBottom: 4,
   },
-  announcementMessage: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 8,
+  announcementType: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6B7280',
+    letterSpacing: 0.5,
   },
   announcementDate: {
     fontSize: 12,
-    color: '#6B7280',
+    color: '#9CA3AF',
+    marginTop: 4,
   },
   closeButton: {
     backgroundColor: '#3B82F6',
-    padding: 15,
-    borderRadius: 8,
+    padding: 16,
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 15,
+    marginTop: 16,
   },
   closeButtonText: {
     color: 'white',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
 

@@ -1,0 +1,2014 @@
+/**
+ * DriverBookingScreen.jsx - Driver's Special Trip Booking Screen
+ *
+ * Features for drivers:
+ * - Toggle online/offline status
+ * - View nearby passenger booking requests
+ * - Accept bookings directly or make counter offers
+ * - Track active trips with real-time location
+ * - Complete trips within destination radius (300m)
+ * - View booking/trip history
+ */
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  Alert,
+  ScrollView,
+  TextInput,
+  Modal,
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  Dimensions,
+  Platform,
+} from 'react-native';
+import MapView, { Marker, Circle, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSelector } from 'react-redux';
+import axios from 'axios';
+import Constants from 'expo-constants';
+
+import { colors, spacing } from '../../components/common/theme';
+import { getToken } from '../../utils/jwtStorage';
+import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
+
+const BACKEND_URL = Constants.expoConfig?.extra?.BACKEND_URL || 'http://192.168.254.105:5000';
+const API_URL = `${BACKEND_URL}/api/booking`;
+
+// Trip completion radius (300 meters)
+const COMPLETION_RADIUS_METERS = 300;
+// Default search radius for nearby bookings (km)
+const SEARCH_RADIUS_KM = 5;
+// Polling interval for fetching bookings (ms)
+const POLL_INTERVAL = 10000;
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// View modes
+const VIEW_MODE = {
+  LIST: 'list',
+  MAP: 'map',
+};
+
+const DriverBookingScreen = ({ navigation }) => {
+  const db = useAsyncSQLiteContext();
+  const mapRef = useRef(null);
+  const watchRef = useRef(null);
+  const pollIntervalRef = useRef(null);
+
+  const { user } = useSelector((state) => state.auth);
+
+  // Authentication
+  const [authToken, setAuthToken] = useState(null);
+
+  // Online status
+  const [isOnline, setIsOnline] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Location
+  const [userLocation, setUserLocation] = useState(null);
+  const [hasLocationPermission, setHasLocationPermission] = useState(false);
+
+  // Bookings
+  const [nearbyBookings, setNearbyBookings] = useState([]);
+  const [activeBooking, setActiveBooking] = useState(null);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [pendingOffers, setPendingOffers] = useState([]); // Offers made by driver awaiting user response
+
+  // Trip tracking
+  const [distanceToDestination, setDistanceToDestination] = useState(null);
+  const [distanceToPickup, setDistanceToPickup] = useState(null);
+  const [isPickedUp, setIsPickedUp] = useState(false);
+
+  // UI state
+  const [viewMode, setViewMode] = useState(VIEW_MODE.LIST);
+  const [showOfferModal, setShowOfferModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [counterOffer, setCounterOffer] = useState('');
+  const [offerMessage, setOfferMessage] = useState('');
+  const [tripHistory, setTripHistory] = useState([]);
+
+  // Map region
+  const [mapRegion, setMapRegion] = useState({
+    latitude: 14.5176,
+    longitude: 121.0509,
+    latitudeDelta: 0.05,
+    longitudeDelta: 0.05,
+  });
+
+  // ==================== INITIALIZATION ====================
+
+  useEffect(() => {
+    initializeScreen();
+    return () => {
+      cleanup();
+    };
+  }, [db]);
+
+  useEffect(() => {
+    // Start/stop polling based on online status
+    if (isOnline && !activeBooking && authToken) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+    return () => stopPolling();
+  }, [isOnline, activeBooking, authToken, userLocation]);
+
+  const initializeScreen = async () => {
+    try {
+      setIsLoading(true);
+
+      // Get auth token
+      let token = null;
+      if (db) {
+        token = await getToken(db);
+        if (token) {
+          setAuthToken(token);
+        } else {
+          Alert.alert('Authentication Required', 'Please login to access driver booking.');
+          return;
+        }
+      }
+
+      // Request location permission
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        setHasLocationPermission(true);
+        await getCurrentLocation();
+      } else {
+        Alert.alert(
+          'Location Required',
+          'Location permission is needed to find nearby passengers and complete trips.'
+        );
+      }
+
+      // Check for existing active booking - pass token directly since state may not be updated yet
+      if (token) {
+        await checkActiveBooking(token);
+      }
+
+    } catch (error) {
+      console.error('Error initializing driver screen:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const cleanup = () => {
+    stopPolling();
+    if (watchRef.current) {
+      watchRef.current.remove();
+      watchRef.current = null;
+    }
+  };
+
+  // ==================== LOCATION ====================
+
+  const getCurrentLocation = async () => {
+    try {
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const { latitude, longitude } = location.coords;
+      const newLocation = { latitude, longitude };
+      setUserLocation(newLocation);
+      setMapRegion({
+        ...newLocation,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      });
+    } catch (error) {
+      console.error('Error getting current location:', error);
+    }
+  };
+
+  const startLocationTracking = async () => {
+    if (watchRef.current) return;
+
+    try {
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        (location) => {
+          const { latitude, longitude } = location.coords;
+          const newLocation = { latitude, longitude };
+          setUserLocation(newLocation);
+
+          // Update distances if active booking
+          if (activeBooking) {
+            // Distance to pickup
+            if (!isPickedUp) {
+              const pickupDist = calculateDistance(
+                latitude,
+                longitude,
+                activeBooking.pickup.latitude,
+                activeBooking.pickup.longitude
+              );
+              setDistanceToPickup(pickupDist);
+            }
+
+            // Distance to destination
+            const destDist = calculateDistance(
+              latitude,
+              longitude,
+              activeBooking.destination.latitude,
+              activeBooking.destination.longitude
+            );
+            setDistanceToDestination(destDist);
+          }
+        }
+      );
+      watchRef.current = subscription;
+    } catch (error) {
+      console.error('Error starting location tracking:', error);
+    }
+  };
+
+  const stopLocationTracking = () => {
+    if (watchRef.current) {
+      watchRef.current.remove();
+      watchRef.current = null;
+    }
+  };
+
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // Distance in meters
+  };
+
+  const formatDistance = (meters) => {
+    if (meters < 1000) {
+      return `${Math.round(meters)}m`;
+    }
+    return `${(meters / 1000).toFixed(1)}km`;
+  };
+
+  // ==================== POLLING ====================
+
+  const startPolling = () => {
+    if (pollIntervalRef.current) return;
+    fetchNearbyBookings();
+    pollIntervalRef.current = setInterval(fetchNearbyBookings, POLL_INTERVAL);
+  };
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  // ==================== API CALLS ====================
+
+  const getAuthHeaders = (token = null) => ({
+    headers: { Authorization: `Bearer ${token || authToken}` },
+  });
+
+  const checkActiveBooking = async (token = null) => {
+    const currentToken = token || authToken;
+    if (!currentToken) return;
+
+    try {
+      // Check for accepted or in_progress bookings in one call
+      const response = await axios.get(
+        `${API_URL}/driver?status=accepted,in_progress`,
+        getAuthHeaders(currentToken)
+      );
+
+      if (response.data.success && response.data.bookings?.length > 0) {
+        const booking = response.data.bookings[0];
+        setActiveBooking(booking);
+        setIsOnline(true);
+        // If status is in_progress, passenger is already picked up
+        if (booking.status === 'in_progress') {
+          setIsPickedUp(true);
+        }
+        startLocationTracking();
+        return; // Found active booking, no need to check further
+      }
+
+      // Check for pending offers (offer_made status) where this driver made an offer
+      await checkPendingOffers(currentToken);
+    } catch (error) {
+      console.error('Error checking active booking:', error);
+    }
+  };
+
+  /**
+   * Check for offers the driver made that are awaiting user response
+   */
+  const checkPendingOffers = async (token = null) => {
+    const currentToken = token || authToken;
+    if (!currentToken) return;
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/driver?status=offer_made`,
+        getAuthHeaders(currentToken)
+      );
+
+      if (response.data.success) {
+        const offers = response.data.bookings || [];
+        setPendingOffers(offers);
+        
+        // If we had pending offers before, check if any have been accepted
+        // by re-checking for accepted bookings
+        if (offers.length < pendingOffers.length || pendingOffers.length > 0) {
+          const acceptedResponse = await axios.get(
+            `${API_URL}/driver?status=accepted`,
+            getAuthHeaders(currentToken)
+          );
+          
+          if (acceptedResponse.data.success && acceptedResponse.data.bookings?.length > 0) {
+            const acceptedBooking = acceptedResponse.data.bookings[0];
+            setActiveBooking(acceptedBooking);
+            setIsOnline(true);
+            setIsPickedUp(false);
+            startLocationTracking();
+            Alert.alert(
+              '🎉 Offer Accepted!',
+              'A passenger has accepted your offer. Navigate to the pickup location.',
+              [{ text: 'OK' }]
+            );
+          }
+        }
+      } else {
+        setPendingOffers([]);
+      }
+    } catch (error) {
+      console.error('Error checking pending offers:', error);
+    }
+  };
+
+  const fetchNearbyBookings = async () => {
+    if (!userLocation || !authToken) return;
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/nearby?lat=${userLocation.latitude}&lon=${userLocation.longitude}&radius=${SEARCH_RADIUS_KM}`,
+        getAuthHeaders()
+      );
+
+      if (response.data.success) {
+        setNearbyBookings(response.data.bookings || []);
+      }
+
+      // Also check for pending offers that may have been accepted
+      await checkPendingOffers();
+    } catch (error) {
+      console.error('Error fetching nearby bookings:', error);
+    }
+  };
+
+  const fetchTripHistory = async () => {
+    if (!authToken) return;
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/driver?status=completed`,
+        getAuthHeaders()
+      );
+
+      if (response.data.success) {
+        setTripHistory(response.data.bookings || []);
+      }
+    } catch (error) {
+      console.error('Error fetching trip history:', error);
+    }
+  };
+
+  const handleAcceptBooking = async (booking) => {
+    if (!authToken) {
+      Alert.alert('Error', 'Authentication required');
+      return;
+    }
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/${booking._id}/driver-respond`,
+        { accept: true },
+        getAuthHeaders()
+      );
+
+      if (response.data.success) {
+        Alert.alert('Success', 'Booking accepted! Navigate to pickup location.');
+        setActiveBooking(response.data.booking);
+        setIsPickedUp(false);
+        startLocationTracking();
+        fetchNearbyBookings();
+      }
+    } catch (error) {
+      Alert.alert('Error', error.response?.data?.message || 'Failed to accept booking');
+    }
+  };
+
+  const handleSendCounterOffer = async () => {
+    if (!authToken || !selectedBooking) return;
+
+    const offerAmount = parseFloat(counterOffer);
+    if (isNaN(offerAmount) || offerAmount <= 0) {
+      Alert.alert('Invalid Offer', 'Please enter a valid fare amount.');
+      return;
+    }
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/${selectedBooking._id}/driver-respond`,
+        {
+          accept: false,
+          counterOffer: offerAmount,
+          message: offerMessage,
+        },
+        getAuthHeaders()
+      );
+
+      if (response.data.success) {
+        Alert.alert('Offer Sent', 'Your counter offer has been sent to the passenger.');
+        setShowOfferModal(false);
+        setCounterOffer('');
+        setOfferMessage('');
+        setSelectedBooking(null);
+        fetchNearbyBookings();
+      }
+    } catch (error) {
+      Alert.alert('Error', error.response?.data?.message || 'Failed to send offer');
+    }
+  };
+
+  const handleConfirmPickup = () => {
+    Alert.alert(
+      'Confirm Pickup',
+      'Has the passenger boarded your tricycle?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Start Trip',
+          onPress: () => {
+            setIsPickedUp(true);
+            Alert.alert('Trip Started', 'Navigate to the destination.');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCompleteTrip = async () => {
+    if (!activeBooking || !userLocation) return;
+
+    const distance = calculateDistance(
+      userLocation.latitude,
+      userLocation.longitude,
+      activeBooking.destination.latitude,
+      activeBooking.destination.longitude
+    );
+
+    if (distance > COMPLETION_RADIUS_METERS) {
+      Alert.alert(
+        'Not at Destination',
+        `You must be within ${COMPLETION_RADIUS_METERS}m of the destination to complete the trip.\n\nCurrent distance: ${formatDistance(distance)}`
+      );
+      return;
+    }
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/${activeBooking._id}/complete`,
+        {
+          driverLat: userLocation.latitude,
+          driverLon: userLocation.longitude,
+        },
+        getAuthHeaders()
+      );
+
+      if (response.data.success) {
+        const fare = activeBooking.agreedFare || activeBooking.preferredFare;
+        Alert.alert(
+          'Trip Completed! 🎉',
+          `Fare collected: ₱${fare}\n\nThank you for completing the trip.`
+        );
+        resetTripState();
+      }
+    } catch (error) {
+      Alert.alert('Error', error.response?.data?.message || 'Failed to complete trip');
+    }
+  };
+
+  const handleCancelTrip = () => {
+    Alert.alert(
+      'Cancel Trip',
+      'Are you sure you want to cancel this trip? This may affect your rating.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await axios.post(
+                `${API_URL}/${activeBooking._id}/cancel`,
+                { reason: 'Driver cancelled' },
+                getAuthHeaders()
+              );
+              Alert.alert('Trip Cancelled', 'The trip has been cancelled.');
+              resetTripState();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to cancel trip');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const resetTripState = () => {
+    setActiveBooking(null);
+    setDistanceToDestination(null);
+    setDistanceToPickup(null);
+    setIsPickedUp(false);
+    stopLocationTracking();
+    if (isOnline) {
+      fetchNearbyBookings();
+    }
+  };
+
+  // ==================== UI HANDLERS ====================
+
+  const toggleOnlineStatus = () => {
+    if (isOnline) {
+      setIsOnline(false);
+      setNearbyBookings([]);
+      stopPolling();
+    } else {
+      if (!hasLocationPermission) {
+        Alert.alert('Location Required', 'Please enable location to go online.');
+        return;
+      }
+      setIsOnline(true);
+      getCurrentLocation();
+    }
+  };
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchNearbyBookings();
+    setIsRefreshing(false);
+  };
+
+  const openOfferModal = (booking) => {
+    setSelectedBooking(booking);
+    setCounterOffer(booking.preferredFare?.toString() || '');
+    setOfferMessage('');
+    setShowOfferModal(true);
+  };
+
+  const openHistoryModal = async () => {
+    await fetchTripHistory();
+    setShowHistoryModal(true);
+  };
+
+  const centerMapOnUser = () => {
+    if (userLocation && mapRef.current) {
+      mapRef.current.animateCamera(
+        { center: userLocation, zoom: 16 },
+        { duration: 500 }
+      );
+    }
+  };
+
+  // ==================== RENDER HELPERS ====================
+
+  const renderBookingCard = ({ item }) => {
+    const distanceToPickupLocation = userLocation
+      ? calculateDistance(
+          userLocation.latitude,
+          userLocation.longitude,
+          item.pickup.latitude,
+          item.pickup.longitude
+        )
+      : null;
+
+    const tripDistance = calculateDistance(
+      item.pickup.latitude,
+      item.pickup.longitude,
+      item.destination.latitude,
+      item.destination.longitude
+    );
+
+    return (
+      <View style={styles.bookingCard}>
+        {/* Header: Passenger info & fare */}
+        <View style={styles.cardHeader}>
+          <View style={styles.passengerSection}>
+            <View style={styles.avatarCircle}>
+              <Ionicons name="person" size={22} color="#fff" />
+            </View>
+            <View style={styles.passengerDetails}>
+              <Text style={styles.passengerName}>
+                {item.user?.firstname || 'Passenger'} {item.user?.lastname || ''}
+              </Text>
+              {item.user?.rating > 0 && (
+                <View style={styles.ratingBadge}>
+                  <Ionicons name="star" size={12} color={colors.starYellow || '#FFD700'} />
+                  <Text style={styles.ratingValue}>{item.user.rating.toFixed(1)}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          <View style={styles.fareContainer}>
+            <Text style={styles.fareLabel}>Offered</Text>
+            <Text style={styles.fareAmount}>₱{item.preferredFare}</Text>
+          </View>
+        </View>
+
+        {/* Trip details */}
+        <View style={styles.tripDetails}>
+          <View style={styles.tripDetailRow}>
+            <View style={styles.iconWrapper}>
+              <Ionicons name="location" size={16} color="#28a745" />
+            </View>
+            <Text style={styles.tripDetailText}>
+              Pickup: {distanceToPickupLocation ? formatDistance(distanceToPickupLocation) + ' away' : 'Calculating...'}
+            </Text>
+          </View>
+          <View style={styles.tripDetailRow}>
+            <View style={styles.iconWrapper}>
+              <Ionicons name="navigate" size={16} color={colors.primary} />
+            </View>
+            <Text style={styles.tripDetailText}>
+              Trip Distance: {formatDistance(tripDistance)}
+            </Text>
+          </View>
+          <View style={styles.tripDetailRow}>
+            <View style={styles.iconWrapper}>
+              <Ionicons name="time-outline" size={16} color="#6c757d" />
+            </View>
+            <Text style={styles.tripDetailText}>
+              {getTimeAgo(item.createdAt)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Action buttons */}
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={styles.acceptBtn}
+            onPress={() => handleAcceptBooking(item)}
+          >
+            <Ionicons name="checkmark" size={18} color="#fff" />
+            <Text style={styles.acceptBtnText}>Accept</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.counterOfferBtn}
+            onPress={() => openOfferModal(item)}
+          >
+            <Ionicons name="cash-outline" size={18} color={colors.primary} />
+            <Text style={styles.counterOfferBtnText}>Counter Offer</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderHistoryItem = ({ item }) => (
+    <TouchableOpacity 
+      style={styles.historyItem}
+      onPress={() => navigation.navigate('BookingHistoryDetail', { bookingId: item._id, isDriver: true })}
+      activeOpacity={0.7}
+    >
+      <View style={styles.historyHeader}>
+        <Text style={styles.historyPassenger}>
+          {item.user?.firstname || 'Passenger'} {item.user?.lastname || ''}
+        </Text>
+        <Text style={styles.historyFare}>₱{item.agreedFare || item.preferredFare}</Text>
+      </View>
+      <Text style={styles.historyDate}>{formatDate(item.completedAt || item.updatedAt)}</Text>
+      <View style={styles.historyStatus}>
+        <Ionicons 
+          name={item.status === 'completed' ? 'checkmark-circle' : 'close-circle'} 
+          size={14} 
+          color={item.status === 'completed' ? '#28a745' : '#dc3545'} 
+        />
+        <Text style={[
+          styles.historyStatusText, 
+          { color: item.status === 'completed' ? '#28a745' : '#dc3545' }
+        ]}>
+          {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+        </Text>
+      </View>
+      <View style={styles.historyArrow}>
+        <Ionicons name="chevron-forward" size={16} color="#999" />
+      </View>
+    </TouchableOpacity>
+  );
+
+  const getTimeAgo = (dateString) => {
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hr${diffHours > 1 ? 's' : ''} ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+  };
+
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  // ==================== LOADING STATE ====================
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading Driver Mode...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ==================== ACTIVE TRIP VIEW ====================
+
+  if (activeBooking) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        {/* Header */}
+        <View style={styles.activeTripHeader}>
+          <View style={styles.headerLeft}>
+            <View style={styles.tripStatusBadge}>
+              <View style={styles.tripStatusDot} />
+              <Text style={styles.tripStatusText}>
+                {isPickedUp ? 'In Progress' : 'Pickup Passenger'}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity style={styles.cancelIcon} onPress={handleCancelTrip}>
+            <Ionicons name="close" size={24} color="#dc3545" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Map */}
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={styles.fullMap}
+          region={{
+            latitude: userLocation?.latitude || activeBooking.pickup.latitude,
+            longitude: userLocation?.longitude || activeBooking.pickup.longitude,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+          }}
+          showsUserLocation={true}
+          showsMyLocationButton={false}
+        >
+          {/* Pickup marker */}
+          <Marker
+            coordinate={activeBooking.pickup}
+            title="Pickup"
+            description="Passenger pickup location"
+          >
+            <View style={styles.pickupMarker}>
+              <Ionicons name="person" size={14} color="#fff" />
+            </View>
+          </Marker>
+
+          {/* Destination marker */}
+          <Marker
+            coordinate={activeBooking.destination}
+            title="Destination"
+            description="Drop-off location"
+          >
+            <View style={styles.destinationMarker}>
+              <Ionicons name="flag" size={14} color="#fff" />
+            </View>
+          </Marker>
+
+          {/* Route line */}
+          <Polyline
+            coordinates={[
+              isPickedUp ? userLocation : activeBooking.pickup,
+              activeBooking.destination,
+            ].filter(Boolean)}
+            strokeColor={colors.primary}
+            strokeWidth={4}
+            lineDashPattern={[10, 5]}
+          />
+
+          {/* Completion zone */}
+          <Circle
+            center={activeBooking.destination}
+            radius={COMPLETION_RADIUS_METERS}
+            strokeColor="rgba(40,167,69,0.7)"
+            fillColor="rgba(40,167,69,0.15)"
+            strokeWidth={2}
+          />
+        </MapView>
+
+        {/* Center on user button */}
+        <TouchableOpacity style={styles.centerMapBtn} onPress={centerMapOnUser}>
+          <Ionicons name="locate" size={22} color={colors.primary} />
+        </TouchableOpacity>
+
+        {/* Trip info panel */}
+        <View style={styles.tripPanel}>
+          {/* Passenger info */}
+          <View style={styles.tripPassengerRow}>
+            <View style={styles.avatarCircle}>
+              <Ionicons name="person" size={20} color="#fff" />
+            </View>
+            <View style={styles.tripPassengerInfo}>
+              <Text style={styles.tripPassengerName}>
+                {activeBooking.user?.firstname || 'Passenger'} {activeBooking.user?.lastname || ''}
+              </Text>
+              <Text style={styles.tripFare}>
+                Fare: ₱{activeBooking.agreedFare || activeBooking.preferredFare}
+              </Text>
+            </View>
+          </View>
+
+          {/* Distance info */}
+          <View style={styles.distanceInfoRow}>
+            {!isPickedUp && distanceToPickup !== null && (
+              <View style={styles.distanceItem}>
+                <Ionicons name="person" size={16} color="#28a745" />
+                <Text style={styles.distanceLabel}>To Pickup:</Text>
+                <Text style={styles.distanceValue}>{formatDistance(distanceToPickup)}</Text>
+              </View>
+            )}
+            {distanceToDestination !== null && (
+              <View style={styles.distanceItem}>
+                <Ionicons name="flag" size={16} color={colors.primary} />
+                <Text style={styles.distanceLabel}>To Destination:</Text>
+                <Text style={styles.distanceValue}>{formatDistance(distanceToDestination)}</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Action buttons */}
+          {!isPickedUp ? (
+            <TouchableOpacity style={styles.pickupBtn} onPress={handleConfirmPickup}>
+              <Ionicons name="enter-outline" size={20} color="#fff" />
+              <Text style={styles.pickupBtnText}>Confirm Passenger Pickup</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.completeBtn,
+                distanceToDestination > COMPLETION_RADIUS_METERS && styles.btnDisabled,
+              ]}
+              onPress={handleCompleteTrip}
+              disabled={distanceToDestination > COMPLETION_RADIUS_METERS}
+            >
+              <Ionicons name="checkmark-circle" size={20} color="#fff" />
+              <Text style={styles.completeBtnText}>Complete Trip</Text>
+            </TouchableOpacity>
+          )}
+
+          {isPickedUp && distanceToDestination > COMPLETION_RADIUS_METERS && (
+            <Text style={styles.completionHint}>
+              Navigate to destination to complete ({formatDistance(COMPLETION_RADIUS_METERS)} range)
+            </Text>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ==================== MAIN VIEW (BOOKING LIST) ====================
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Ionicons name="car-sport" size={26} color={colors.primary} />
+          <View style={styles.headerTitleSection}>
+            <Text style={styles.headerTitle}>Driver Bookings</Text>
+            <Text style={styles.headerSubtitle}>
+              {isOnline
+                ? nearbyBookings.length > 0
+                  ? `${nearbyBookings.length} request${nearbyBookings.length > 1 ? 's' : ''} nearby`
+                  : 'Searching for passengers...'
+                : 'You are offline'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Online toggle */}
+        <TouchableOpacity
+          style={[styles.onlineToggle, isOnline && styles.onlineToggleActive]}
+          onPress={toggleOnlineStatus}
+        >
+          <View style={[styles.toggleIndicator, isOnline && styles.toggleIndicatorActive]} />
+          <Text style={[styles.toggleLabel, isOnline && styles.toggleLabelActive]}>
+            {isOnline ? 'Online' : 'Offline'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Action buttons row */}
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          style={[styles.viewModeBtn, viewMode === VIEW_MODE.LIST && styles.viewModeBtnActive]}
+          onPress={() => setViewMode(VIEW_MODE.LIST)}
+        >
+          <Ionicons
+            name="list"
+            size={18}
+            color={viewMode === VIEW_MODE.LIST ? '#fff' : colors.primary}
+          />
+          <Text
+            style={[
+              styles.viewModeBtnText,
+              viewMode === VIEW_MODE.LIST && styles.viewModeBtnTextActive,
+            ]}
+          >
+            List
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.viewModeBtn, viewMode === VIEW_MODE.MAP && styles.viewModeBtnActive]}
+          onPress={() => setViewMode(VIEW_MODE.MAP)}
+        >
+          <Ionicons
+            name="map"
+            size={18}
+            color={viewMode === VIEW_MODE.MAP ? '#fff' : colors.primary}
+          />
+          <Text
+            style={[
+              styles.viewModeBtnText,
+              viewMode === VIEW_MODE.MAP && styles.viewModeBtnTextActive,
+            ]}
+          >
+            Map
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.historyBtn} onPress={openHistoryModal}>
+          <Ionicons name="time-outline" size={18} color={colors.primary} />
+          <Text style={styles.historyBtnText}>History</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Content */}
+      {!isOnline ? (
+        // Offline state
+        <View style={styles.offlineContainer}>
+          <Ionicons name="cloud-offline-outline" size={80} color={colors.orangeShade4 || '#ccc'} />
+          <Text style={styles.offlineTitle}>You're Offline</Text>
+          <Text style={styles.offlineSubtitle}>
+            Go online to start receiving booking requests from nearby passengers.
+          </Text>
+          <TouchableOpacity style={styles.goOnlineBtn} onPress={toggleOnlineStatus}>
+            <Text style={styles.goOnlineBtnText}>Go Online</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.contentScroll}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Pending Offers Section */}
+          {pendingOffers.length > 0 && (
+            <View style={styles.pendingOffersSection}>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="hourglass-outline" size={20} color={colors.primary} />
+                <Text style={styles.sectionTitle}>Pending Offers</Text>
+                <View style={styles.pendingBadge}>
+                  <Text style={styles.pendingBadgeText}>{pendingOffers.length}</Text>
+                </View>
+              </View>
+              {pendingOffers.map((offer) => (
+                <View key={offer._id} style={styles.pendingOfferCard}>
+                  <View style={styles.pendingOfferHeader}>
+                    <View style={styles.pendingOfferPassenger}>
+                      <View style={styles.avatarSmall}>
+                        <Ionicons name="person" size={14} color="#fff" />
+                      </View>
+                      <Text style={styles.pendingOfferName}>
+                        {offer.user?.firstname || 'Passenger'} {offer.user?.lastname || ''}
+                      </Text>
+                    </View>
+                    <View style={styles.pendingOfferStatus}>
+                      <View style={styles.waitingDot} />
+                      <Text style={styles.waitingText}>Waiting</Text>
+                    </View>
+                  </View>
+                  <View style={styles.pendingOfferDetails}>
+                    <View style={styles.pendingOfferRow}>
+                      <Ionicons name="cash-outline" size={16} color="#28a745" />
+                      <Text style={styles.pendingOfferFare}>
+                        Your offer: ₱{offer.driverOffer?.amount || offer.preferredFare}
+                      </Text>
+                    </View>
+                    <View style={styles.pendingOfferRow}>
+                      <Ionicons name="location" size={16} color={colors.primary} />
+                      <Text style={styles.pendingOfferLocation} numberOfLines={1}>
+                        {offer.pickup?.address || 'Pickup location'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.pendingOfferHint}>
+                    Waiting for passenger to accept or decline...
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Map or List View */}
+          {viewMode === VIEW_MODE.MAP ? (
+            // Map view
+            <View style={styles.mapContainer}>
+              <MapView
+                ref={mapRef}
+                provider={PROVIDER_GOOGLE}
+                style={styles.fullMap}
+                region={mapRegion}
+                showsUserLocation={true}
+                showsMyLocationButton={false}
+              >
+                {/* Nearby booking markers */}
+                {nearbyBookings.map((booking) => (
+                  <Marker
+                    key={booking._id}
+                    coordinate={booking.pickup}
+                    onPress={() => openOfferModal(booking)}
+                  >
+                    <View style={styles.bookingMarker}>
+                      <Text style={styles.bookingMarkerText}>₱{booking.preferredFare}</Text>
+                    </View>
+                  </Marker>
+                ))}
+              </MapView>
+              <TouchableOpacity style={styles.centerMapBtn} onPress={centerMapOnUser}>
+                <Ionicons name="locate" size={22} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+          ) : nearbyBookings.length === 0 && pendingOffers.length === 0 ? (
+            // Empty state
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={70} color={colors.orangeShade4 || '#ccc'} />
+              <Text style={styles.emptyTitle}>No Bookings Nearby</Text>
+              <Text style={styles.emptySubtitle}>
+                We'll notify you when passengers request trips in your area.
+              </Text>
+              <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+                <Ionicons name="refresh" size={18} color="#fff" />
+                <Text style={styles.refreshBtnText}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
+          ) : nearbyBookings.length > 0 ? (
+            // Nearby Bookings Section
+            <View style={styles.nearbyBookingsSection}>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="locate-outline" size={20} color={colors.primary} />
+                <Text style={styles.sectionTitle}>Nearby Requests</Text>
+                <View style={styles.nearbyBadge}>
+                  <Text style={styles.nearbyBadgeText}>{nearbyBookings.length}</Text>
+                </View>
+              </View>
+              {nearbyBookings.map((booking) => (
+                <View key={booking._id}>
+                  {renderBookingCard({ item: booking })}
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </ScrollView>
+      )}
+
+      {/* Counter Offer Modal */}
+      <Modal
+        visible={showOfferModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowOfferModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Make Counter Offer</Text>
+              <TouchableOpacity onPress={() => setShowOfferModal(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedBooking && (
+              <>
+                <View style={styles.originalOfferRow}>
+                  <Text style={styles.originalOfferLabel}>Passenger's offer:</Text>
+                  <Text style={styles.originalOfferValue}>₱{selectedBooking.preferredFare}</Text>
+                </View>
+
+                <View style={styles.counterOfferInput}>
+                  <Text style={styles.currencyPrefix}>₱</Text>
+                  <TextInput
+                    style={styles.offerTextInput}
+                    placeholder="Enter your fare"
+                    keyboardType="numeric"
+                    value={counterOffer}
+                    onChangeText={setCounterOffer}
+                  />
+                </View>
+
+                <TextInput
+                  style={styles.messageTextInput}
+                  placeholder="Add a message (optional)"
+                  value={offerMessage}
+                  onChangeText={setOfferMessage}
+                  multiline
+                  numberOfLines={2}
+                />
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.acceptDirectBtn}
+                    onPress={() => {
+                      setShowOfferModal(false);
+                      handleAcceptBooking(selectedBooking);
+                    }}
+                  >
+                    <Text style={styles.acceptDirectBtnText}>Accept ₱{selectedBooking.preferredFare}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.sendOfferBtn} onPress={handleSendCounterOffer}>
+                    <Text style={styles.sendOfferBtnText}>Send Offer</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Trip History Modal */}
+      <Modal
+        visible={showHistoryModal}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => setShowHistoryModal(false)}
+      >
+        <SafeAreaView style={styles.historyModalContainer} edges={['top', 'bottom']}>
+          <View style={styles.historyModalHeader}>
+            <Text style={styles.historyModalTitle}>Trip History</Text>
+            <TouchableOpacity onPress={() => setShowHistoryModal(false)}>
+              <Ionicons name="close" size={24} color="#666" />
+            </TouchableOpacity>
+          </View>
+
+          {tripHistory.length === 0 ? (
+            <View style={styles.emptyHistory}>
+              <Ionicons name="document-text-outline" size={50} color="#ccc" />
+              <Text style={styles.emptyHistoryText}>No completed trips yet</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={tripHistory}
+              renderItem={renderHistoryItem}
+              keyExtractor={(item) => item._id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.historyList}
+            />
+          )}
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
+  );
+};
+
+// ==================== STYLES ====================
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.ivory1 || '#FFFEF7',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: colors.orangeShade5 || '#666',
+  },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.medium || 16,
+    paddingVertical: spacing.medium || 16,
+    backgroundColor: colors.ivory1 || '#FFFEF7',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3 || '#E8E8E8',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  headerTitleSection: {
+    marginLeft: 10,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: colors.orangeShade5 || '#666',
+    marginTop: 2,
+  },
+  onlineToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: colors.ivory4 || '#F5F5F5',
+    borderWidth: 1,
+    borderColor: colors.ivory3 || '#E8E8E8',
+  },
+  onlineToggleActive: {
+    backgroundColor: '#d4edda',
+    borderColor: '#28a745',
+  },
+  toggleIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#999',
+    marginRight: 8,
+  },
+  toggleIndicatorActive: {
+    backgroundColor: '#28a745',
+  },
+  toggleLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#999',
+  },
+  toggleLabelActive: {
+    color: '#28a745',
+  },
+
+  // Action row
+  actionRow: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.medium || 16,
+    paddingVertical: spacing.small || 8,
+    gap: 8,
+  },
+  viewModeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: 'transparent',
+  },
+  viewModeBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  viewModeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+    marginLeft: 4,
+  },
+  viewModeBtnTextActive: {
+    color: '#fff',
+  },
+  historyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    marginLeft: 'auto',
+  },
+  historyBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+    marginLeft: 4,
+  },
+
+  // Booking card
+  listContent: {
+    padding: spacing.medium || 16,
+  },
+  bookingCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: spacing.medium || 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: colors.ivory3 || '#E8E8E8',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  passengerSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  passengerDetails: {
+    marginLeft: 10,
+  },
+  passengerName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.orangeShade7 || '#333',
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  ratingValue: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
+  },
+  fareContainer: {
+    alignItems: 'flex-end',
+  },
+  fareLabel: {
+    fontSize: 11,
+    color: '#999',
+    textTransform: 'uppercase',
+  },
+  fareAmount: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  tripDetails: {
+    marginBottom: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.ivory3 || '#E8E8E8',
+  },
+  tripDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  iconWrapper: {
+    width: 24,
+    alignItems: 'center',
+  },
+  tripDetailText: {
+    fontSize: 13,
+    color: colors.orangeShade6 || '#555',
+    marginLeft: 6,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  acceptBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#28a745',
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  acceptBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  counterOfferBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+  },
+  counterOfferBtnText: {
+    color: colors.primary,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+
+  // Offline / Empty states
+  offlineContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.large || 24,
+  },
+  offlineTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+    marginTop: 16,
+  },
+  offlineSubtitle: {
+    fontSize: 14,
+    color: colors.orangeShade5 || '#666',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  goOnlineBtn: {
+    marginTop: 24,
+    backgroundColor: '#28a745',
+    paddingVertical: 14,
+    paddingHorizontal: 36,
+    borderRadius: 12,
+  },
+  goOnlineBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.large || 24,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+    marginTop: 16,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: colors.orangeShade5 || '#666',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  refreshBtn: {
+    marginTop: 24,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+  },
+  refreshBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+
+  // Map
+  mapContainer: {
+    flex: 1,
+  },
+  fullMap: {
+    flex: 1,
+  },
+  centerMapBtn: {
+    position: 'absolute',
+    right: 16,
+    bottom: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  bookingMarker: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  bookingMarkerText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
+  // Active trip
+  activeTripHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.medium || 16,
+    paddingVertical: 12,
+    backgroundColor: colors.ivory1 || '#FFFEF7',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3 || '#E8E8E8',
+  },
+  tripStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d4edda',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  tripStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#28a745',
+    marginRight: 8,
+  },
+  tripStatusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#155724',
+  },
+  cancelIcon: {
+    padding: 8,
+  },
+  pickupMarker: {
+    backgroundColor: '#28a745',
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  destinationMarker: {
+    backgroundColor: colors.primary,
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  tripPanel: {
+    backgroundColor: '#fff',
+    paddingHorizontal: spacing.medium || 16,
+    paddingVertical: spacing.medium || 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.ivory3 || '#E8E8E8',
+  },
+  tripPassengerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  tripPassengerInfo: {
+    marginLeft: 12,
+  },
+  tripPassengerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.orangeShade7 || '#333',
+  },
+  tripFare: {
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  distanceInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: colors.ivory4 || '#F5F5F5',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 14,
+  },
+  distanceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  distanceLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
+  },
+  distanceValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+    marginLeft: 4,
+  },
+  pickupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007bff',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  pickupBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  completeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#28a745',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  completeBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+    marginLeft: 8,
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  completionHint: {
+    fontSize: 12,
+    color: colors.orangeShade5 || '#666',
+    textAlign: 'center',
+    marginTop: 10,
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: spacing.large || 24,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+  },
+  historyModalContent: {
+    maxHeight: SCREEN_HEIGHT * 0.7,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+  },
+  originalOfferRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3 || '#E8E8E8',
+  },
+  originalOfferLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  originalOfferValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+  },
+  counterOfferInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.ivory4 || '#F5F5F5',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  currencyPrefix: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  offerTextInput: {
+    flex: 1,
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.orangeShade7 || '#333',
+    paddingVertical: 14,
+    marginLeft: 8,
+  },
+  messageTextInput: {
+    backgroundColor: colors.ivory4 || '#F5F5F5',
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 14,
+    textAlignVertical: 'top',
+    marginBottom: 20,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  acceptDirectBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.ivory4 || '#F5F5F5',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#28a745',
+  },
+  acceptDirectBtnText: {
+    color: '#28a745',
+    fontWeight: '600',
+  },
+  sendOfferBtn: {
+    flex: 1.5,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  sendOfferBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+
+  // History Modal
+  historyModalContainer: {
+    flex: 1,
+    backgroundColor: colors.ivory1 || '#FFFEF7',
+    padding: spacing.medium || 16,
+  },
+  historyModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.medium || 16,
+    paddingBottom: spacing.medium || 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3 || '#E8E8E8',
+  },
+  historyModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+  },
+  historyList: {
+    paddingBottom: spacing.medium || 16,
+  },
+  emptyHistory: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyHistoryText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 12,
+  },
+  historyItem: {
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3 || '#E8E8E8',
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  historyPassenger: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.orangeShade7 || '#333',
+  },
+  historyFare: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  historyDate: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
+  },
+  historyStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  historyStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  historyArrow: {
+    position: 'absolute',
+    right: 0,
+    top: '50%',
+    marginTop: -8,
+  },
+
+  // Content scroll
+  contentScroll: {
+    flex: 1,
+  },
+
+  // Section headers
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.orangeShade7 || '#333',
+    marginLeft: 8,
+  },
+
+  // Pending offers section
+  pendingOffersSection: {
+    padding: spacing.medium || 16,
+    paddingBottom: 8,
+  },
+  pendingBadge: {
+    backgroundColor: '#ffc107',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  pendingBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#333',
+  },
+  pendingOfferCard: {
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#ffc107',
+    borderLeftWidth: 4,
+  },
+  pendingOfferHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  pendingOfferPassenger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarSmall: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pendingOfferName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.orangeShade7 || '#333',
+    marginLeft: 8,
+  },
+  pendingOfferStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff3cd',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  waitingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ffc107',
+    marginRight: 6,
+  },
+  waitingText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#856404',
+  },
+  pendingOfferDetails: {
+    marginBottom: 8,
+  },
+  pendingOfferRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  pendingOfferFare: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#28a745',
+    marginLeft: 8,
+  },
+  pendingOfferLocation: {
+    fontSize: 13,
+    color: colors.orangeShade6 || '#555',
+    marginLeft: 8,
+    flex: 1,
+  },
+  pendingOfferHint: {
+    fontSize: 12,
+    color: '#856404',
+    fontStyle: 'italic',
+  },
+
+  // Nearby bookings section
+  nearbyBookingsSection: {
+    padding: spacing.medium || 16,
+    paddingTop: 8,
+  },
+  nearbyBadge: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  nearbyBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+});
+
+export default DriverBookingScreen;

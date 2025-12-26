@@ -13,6 +13,7 @@ import { colors } from '../../components/common/theme';
 import GuestWeather from './weather';
 import GuestMaps from './maps';
 import GuestTracking from './tracking';
+import BookingScreen from './BookingScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -34,6 +35,15 @@ const GuestMain = () => {
           headerShown: false,
         }}
       >
+        <Tab.Screen
+          name="Booking"
+          component={BookingScreen}
+          options={{
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="car-outline" size={size} color={color} />
+            ),
+          }}
+        />
         <Tab.Screen
           name="Weather"
           component={GuestWeather}

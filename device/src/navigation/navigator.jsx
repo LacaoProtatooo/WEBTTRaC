@@ -24,6 +24,7 @@ import ForumScreen from '../screens/common/ForumScreen';
 import LostFoundScreen from '../screens/common/LostFoundScreen';
 import NotificationInbox from '../screens/common/notificationInbox';
 import NotificationDetail from '../screens/common/notificationDetail';
+import BookingHistoryDetail from '../screens/common/BookingHistoryDetail';
 
 // Drawers
 import AppDrawer from '../components/common/appdrawer';
@@ -213,6 +214,7 @@ const Navigator = () => {
             <Stack.Screen name="LostFound" component={LostFoundScreen} />
             <Stack.Screen name="NotificationInbox" component={NotificationInbox} />
             <Stack.Screen name="NotificationDetail" component={NotificationDetail} />
+            <Stack.Screen name="BookingHistoryDetail" component={BookingHistoryDetail} />
           </Stack.Navigator>
 
           {/* Drawer Overlay with Animation */}
