@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { View, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, Text, Pressable, Animated } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, Text, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Provider as PaperProvider } from 'react-native-paper';
 import { useSelector } from 'react-redux';
@@ -32,6 +32,9 @@ import AppDrawer from '../components/common/appdrawer';
 const Stack = createStackNavigator();
 export const navigationRef = createNavigationContainerRef();
 
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const BUTTON_HEIGHT = 44;
+
 const Navigator = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [notificationData, setNotificationData] = useState(null);
@@ -42,6 +45,54 @@ const Navigator = () => {
   // Animation values
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
+
+  // Draggable button position (start at middle of screen)
+  const initialY = (SCREEN_HEIGHT - BUTTON_HEIGHT) / 2;
+  const buttonY = useRef(new Animated.Value(initialY)).current;
+  const lastY = useRef(initialY);
+
+  // PanResponder for draggable button
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Only respond to vertical drags (not taps)
+        return Math.abs(gestureState.dy) > 5;
+      },
+      onPanResponderGrant: () => {
+        buttonY.setOffset(lastY.current);
+        buttonY.setValue(0);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        // Calculate new position with bounds
+        const newY = lastY.current + gestureState.dy;
+        const minY = 60; // Top boundary (below status bar)
+        const maxY = SCREEN_HEIGHT - BUTTON_HEIGHT - 60; // Bottom boundary
+        
+        if (newY >= minY && newY <= maxY) {
+          buttonY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        buttonY.flattenOffset();
+        // Calculate final position with bounds
+        let finalY = lastY.current + gestureState.dy;
+        const minY = 60;
+        const maxY = SCREEN_HEIGHT - BUTTON_HEIGHT - 60;
+        
+        // Clamp to bounds
+        finalY = Math.max(minY, Math.min(maxY, finalY));
+        lastY.current = finalY;
+        
+        // Snap to final position
+        Animated.spring(buttonY, {
+          toValue: finalY,
+          useNativeDriver: false,
+          friction: 7,
+        }).start();
+      },
+    })
+  ).current;
 
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
@@ -120,19 +171,29 @@ const Navigator = () => {
         }}
       >
         <View style={{ flex: 1 }}>
-          {/* Floating menu button */}
-          <TouchableOpacity
-            style={styles.floatingButton}
-            onPress={() => {
-              if (drawerVisible) {
-                closeDrawer();
-              } else {
-                setDrawerVisible(true);
-              }
-            }}
+          {/* Floating menu button - draggable */}
+          <Animated.View
+            style={[
+              styles.floatingButton,
+              {
+                top: buttonY,
+              },
+            ]}
+            {...panResponder.panHandlers}
           >
-            <Ionicons name="menu" size={25} color="#000000a1" />
-          </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (drawerVisible) {
+                  closeDrawer();
+                } else {
+                  setDrawerVisible(true);
+                }
+              }}
+              style={styles.buttonTouchable}
+            >
+              <Ionicons name="menu" size={25} color="#000000a1" />
+            </TouchableOpacity>
+          </Animated.View>
 
           {/* Stack Navigator */}
           <Stack.Navigator 
@@ -220,13 +281,21 @@ const styles = StyleSheet.create({
   },
   floatingButton: {
     position: 'absolute',
-    top: 40,
-    left: 20,
+    left: 0,
     zIndex: 999,
     backgroundColor: 'white',
-    borderRadius: 30,
-    padding: 5,
+    borderTopRightRadius: 20,
+    borderBottomRightRadius: 20,
     elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  buttonTouchable: {
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingLeft: 5,
   },
   drawerOverlay: {
     position: 'absolute',
