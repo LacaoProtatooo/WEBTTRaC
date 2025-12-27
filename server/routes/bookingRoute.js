@@ -12,7 +12,7 @@ import {
   getNearbyBookings,
   getDriverBookings,
 } from '../controllers/bookingController.js';
-import { protect, authorize } from '../middleware/authMiddleware.js';
+import { protect, authorize, requireVerified, requireDriverLicense } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -21,17 +21,17 @@ const router = express.Router();
  * Base path: /api/booking
  */
 
-// User routes
-router.post('/create', protect, createBooking);
+// User routes (requires verified account)
+router.post('/create', protect, requireVerified, createBooking);
 router.get('/user', protect, getUserBookings);
 router.get('/active', protect, getActiveBooking);
-router.post('/:id/respond-offer', protect, respondToOffer);
+router.post('/:id/respond-offer', protect, requireVerified, respondToOffer);
 router.post('/:id/rate', protect, rateDriver);
 
-// Driver routes
+// Driver routes (requires verified license)
 router.get('/nearby', protect, authorize('driver'), getNearbyBookings);
 router.get('/driver', protect, authorize('driver'), getDriverBookings);
-router.post('/:id/driver-respond', protect, authorize('driver'), driverRespondToBooking);
+router.post('/:id/driver-respond', protect, authorize('driver'), requireDriverLicense, driverRespondToBooking);
 
 // Shared routes (user or driver)
 router.get('/:id', protect, getBookingDetails);

@@ -31,12 +31,17 @@ const navItems = [
     path: "/announcements",
   },
   {
+    icon: <UserCircleIcon />,
+    name: "Drivers",
+    path: "/drivers",
+  },
+  {
     icon: <CalenderIcon />,
     name: "Calendar",
     path: "/calendar",
   },
   {
-    icon: <UserCircleIcon />,
+    icon: <PageIcon />,
     name: "User Profile",
     path: "/profile",
   },

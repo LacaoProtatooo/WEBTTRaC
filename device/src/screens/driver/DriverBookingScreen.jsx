@@ -914,7 +914,7 @@ const DriverBookingScreen = ({ navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Ionicons name="car-sport" size={26} color={colors.primary} />
+          <Ionicons name="bicycle" size={26} color={colors.primary} />
           <View style={styles.headerTitleSection}>
             <Text style={styles.headerTitle}>Driver Bookings</Text>
             <Text style={styles.headerSubtitle}>

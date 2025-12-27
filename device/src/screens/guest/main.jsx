@@ -40,7 +40,7 @@ const GuestMain = () => {
           component={BookingScreen}
           options={{
             tabBarIcon: ({ color, size }) => (
-              <Ionicons name="car-outline" size={size} color={color} />
+              <Ionicons name="bicycle-outline" size={size} color={color} />
             ),
           }}
         />

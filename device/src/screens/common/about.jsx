@@ -129,7 +129,7 @@ const About = () => {
 
               <View style={styles.featureCard}>
                 <View style={[styles.featureIconWrapper, { backgroundColor: colors.orangeShade6 }]}>
-                  <Ionicons name="car-sport" size={32} color={colors.ivory1} />
+                  <Ionicons name="bicycle" size={32} color={colors.ivory1} />
                 </View>
                 <Text style={styles.featureTitle}>Community Safety</Text>
                 <Text style={styles.featureDescription}>

@@ -495,7 +495,7 @@ const Account = () => {
                 <Text style={styles.usernameText}>@{username}</Text>
                 <View style={styles.roleContainer}>
                   <Ionicons 
-                    name={role === 'driver' ? 'car-sport' : 'briefcase'} 
+                    name={role === 'driver' ? 'bicycle' : 'briefcase'} 
                     size={16} 
                     color={colors.orangeShade5} 
                   />
