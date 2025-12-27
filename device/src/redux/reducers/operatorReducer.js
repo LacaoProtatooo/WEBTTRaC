@@ -5,7 +5,12 @@ import {
   unassignDriver,
   createTricycle,
   fetchSickLeaves,
-  scanReceipt
+  rejectSickLeave,
+  scanReceipt,
+  saveReceipt,
+  fetchReceipts,
+  deleteReceipt,
+  fetchExpenseSummary
 } from '../actions/operatorAction';
 import {
   approveSickLeave,
@@ -19,14 +24,23 @@ const initialState = {
   
   // Sick leaves data
   sickLeaves: [],
+  sickLeaveStatistics: null,
   
   // Receipt scanner data
   receiptResult: null,
+  receipts: [],
+  receiptsPagination: null,
+  categoryTotals: {},
+  expenseSummary: null,
   
   // Loading states
   loading: false,
   loadingSickLeaves: false,
   loadingReceipt: false,
+  loadingReceipts: false,
+  savingReceipt: false,
+  deletingReceipt: false,
+  loadingSummary: false,
   assigning: false,
   creating: false,
   unassigning: false,
@@ -35,6 +49,7 @@ const initialState = {
   error: null,
   errorSickLeaves: null,
   errorReceipt: null,
+  errorReceipts: null,
 };
 
 const operatorSlice = createSlice({
@@ -57,6 +72,14 @@ const operatorSlice = createSlice({
     clearReceiptResult: (state) => {
       state.receiptResult = null;
       state.errorReceipt = null;
+    },
+    
+    // Clear receipts list
+    clearReceipts: (state) => {
+      state.receipts = [];
+      state.receiptsPagination = null;
+      state.categoryTotals = {};
+      state.errorReceipts = null;
     },
     
     // Clear errors
@@ -136,7 +159,8 @@ const operatorSlice = createSlice({
       })
       .addCase(fetchSickLeaves.fulfilled, (state, action) => {
         state.loadingSickLeaves = false;
-        state.sickLeaves = action.payload || [];
+        state.sickLeaves = action.payload.sickLeaves || [];
+        state.sickLeaveStatistics = action.payload.statistics || null;
       })
       .addCase(fetchSickLeaves.rejected, (state, action) => {
         state.loadingSickLeaves = false;
@@ -156,6 +180,20 @@ const operatorSlice = createSlice({
         .addCase(approveSickLeave.rejected, (state, action) => {
           state.errorSickLeaves = action.payload;
         })
+        
+        // ========== REJECT SICK LEAVE ==========
+        .addCase(rejectSickLeave.pending, (state) => {
+          state.errorSickLeaves = null;
+        })
+        .addCase(rejectSickLeave.fulfilled, (state, action) => {
+          const updated = action.payload;
+          if (updated?._id) {
+            state.sickLeaves = state.sickLeaves.map((sl) => sl._id === updated._id ? updated : sl);
+          }
+        })
+        .addCase(rejectSickLeave.rejected, (state, action) => {
+          state.errorSickLeaves = action.payload;
+        })
       
       // ========== SCAN RECEIPT ==========
       .addCase(scanReceipt.pending, (state) => {
@@ -170,6 +208,61 @@ const operatorSlice = createSlice({
       .addCase(scanReceipt.rejected, (state, action) => {
         state.loadingReceipt = false;
         state.errorReceipt = action.payload;
+      })
+      
+      // ========== SAVE RECEIPT ==========
+      .addCase(saveReceipt.pending, (state) => {
+        state.savingReceipt = true;
+        state.errorReceipt = null;
+      })
+      .addCase(saveReceipt.fulfilled, (state, action) => {
+        state.savingReceipt = false;
+        state.receipts = [action.payload, ...state.receipts];
+      })
+      .addCase(saveReceipt.rejected, (state, action) => {
+        state.savingReceipt = false;
+        state.errorReceipt = action.payload;
+      })
+      
+      // ========== FETCH RECEIPTS ==========
+      .addCase(fetchReceipts.pending, (state) => {
+        state.loadingReceipts = true;
+        state.errorReceipts = null;
+      })
+      .addCase(fetchReceipts.fulfilled, (state, action) => {
+        state.loadingReceipts = false;
+        state.receipts = action.payload.data || [];
+        state.receiptsPagination = action.payload.pagination || null;
+        state.categoryTotals = action.payload.categoryTotals || {};
+      })
+      .addCase(fetchReceipts.rejected, (state, action) => {
+        state.loadingReceipts = false;
+        state.errorReceipts = action.payload;
+      })
+      
+      // ========== DELETE RECEIPT ==========
+      .addCase(deleteReceipt.pending, (state) => {
+        state.deletingReceipt = true;
+      })
+      .addCase(deleteReceipt.fulfilled, (state, action) => {
+        state.deletingReceipt = false;
+        state.receipts = state.receipts.filter(r => r._id !== action.payload);
+      })
+      .addCase(deleteReceipt.rejected, (state, action) => {
+        state.deletingReceipt = false;
+        state.errorReceipts = action.payload;
+      })
+      
+      // ========== FETCH EXPENSE SUMMARY ==========
+      .addCase(fetchExpenseSummary.pending, (state) => {
+        state.loadingSummary = true;
+      })
+      .addCase(fetchExpenseSummary.fulfilled, (state, action) => {
+        state.loadingSummary = false;
+        state.expenseSummary = action.payload;
+      })
+      .addCase(fetchExpenseSummary.rejected, (state, action) => {
+        state.loadingSummary = false;
       });
   },
 });
@@ -177,6 +270,7 @@ const operatorSlice = createSlice({
 export const {
   clearOperatorData,
   clearReceiptResult,
+  clearReceipts,
   clearErrors,
   updateTricycles,
   updateAvailableDrivers

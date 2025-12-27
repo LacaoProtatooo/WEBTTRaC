@@ -17,6 +17,7 @@ import {
   createTricycle,
   fetchSickLeaves,
   approveSickLeave,
+  rejectSickLeave,
   clearErrors
 } from '../../redux/actions/operatorAction';
 
@@ -58,6 +59,7 @@ export default function OperatorScreen({ navigation }) {
     drivers = [],
     availableDrivers = [],
     sickLeaves = [],
+    sickLeaveStatistics,
     loading,
     loadingSickLeaves,
     assigning,
@@ -283,6 +285,14 @@ export default function OperatorScreen({ navigation }) {
     }
   };
 
+  const handleRejectSickLeave = (id, rejectionReason) => {
+    if (token) {
+      dispatch(rejectSickLeave({ token, BACKEND, id, rejectionReason })).then(() => {
+        dispatch(fetchSickLeaves({ token, BACKEND }));
+      });
+    }
+  };
+
   // Show loading screen while database or token is being initialized
   if (!db || (loading && !refreshing)) {
     return <LoadingScreen />;
@@ -355,7 +365,14 @@ export default function OperatorScreen({ navigation }) {
           name="Drivers"
           options={{ headerShown: false }}
         >
-          {() => <DriversTab availableDrivers={availableDrivers} />}
+          {() => (
+            <DriversTab 
+              availableDrivers={availableDrivers} 
+              allDrivers={drivers}
+              onRefresh={onRefresh}
+              refreshing={refreshing}
+            />
+          )}
         </Tab.Screen>
         <Tab.Screen 
           name="Receipt"
@@ -368,6 +385,7 @@ export default function OperatorScreen({ navigation }) {
               receiptResult={operatorState.receiptResult}
               loadingReceipt={operatorState.loadingReceipt}
               errorReceipt={operatorState.errorReceipt}
+              tricycles={tricycles}
             />
           )}
         </Tab.Screen>
@@ -382,6 +400,8 @@ export default function OperatorScreen({ navigation }) {
               errorSickLeaves={operatorState.errorSickLeaves}
               onRefresh={handleFetchSickLeaves}
               onApprove={handleApproveSickLeave}
+              onReject={handleRejectSickLeave}
+              statistics={sickLeaveStatistics}
             />
           )}
         </Tab.Screen>

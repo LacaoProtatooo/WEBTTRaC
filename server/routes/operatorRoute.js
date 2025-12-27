@@ -7,6 +7,12 @@ import {
   unassignDriverFromTricycle,
   getDriverDetails,
   scanReceipt,
+  saveReceipt,
+  getReceipts,
+  getReceiptById,
+  updateReceipt,
+  deleteReceipt,
+  getExpenseSummary,
 } from '../controllers/operatorController.js';
 import { authUser } from '../middleware/authMiddleware.js';
 import { operatorOnly } from '../middleware/operatorMiddleware.js';
@@ -38,6 +44,14 @@ router.post('/unassign-driver', unassignDriverFromTricycle);
 
 // Scan receipt image (multipart/form-data) - field name: `image`
 router.post('/scan-receipt', upload.single('image'), scanReceipt);
+
+// Receipt CRUD operations
+router.post('/receipts', saveReceipt);
+router.get('/receipts', getReceipts);
+router.get('/receipts/summary', getExpenseSummary);
+router.get('/receipts/:receiptId', getReceiptById);
+router.put('/receipts/:receiptId', updateReceipt);
+router.delete('/receipts/:receiptId', deleteReceipt);
 
 export default router;
 

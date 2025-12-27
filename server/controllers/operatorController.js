@@ -1,8 +1,10 @@
 import Tricycle from '../models/tricycleModel.js';
 import User from '../models/userModel.js';
+import Receipt from '../models/receiptModel.js';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import cloudinary from '../utils/cloudinaryConfig.js';
 
 const resolveOcrScriptPath = () => {
   const scriptCandidates = [
@@ -686,3 +688,276 @@ export const scanReceipt = async (req, res) => {
   }
 };
 
+// Save a scanned receipt
+export const saveReceipt = async (req, res) => {
+  try {
+    const operatorId = req.user._id;
+    const {
+      vendorName,
+      receiptDate,
+      totalAmount,
+      subtotal,
+      tax,
+      items,
+      category,
+      rawOcrText,
+      ocrLines,
+      tricycleId,
+      notes,
+      ocrEngine,
+      imageBase64
+    } = req.body;
+
+    // Upload image to Cloudinary if provided
+    let imageUrl = null;
+    if (imageBase64) {
+      try {
+        const uploadResult = await cloudinary.uploader.upload(imageBase64, {
+          folder: 'receipts',
+          resource_type: 'image',
+          transformation: [{ quality: 'auto:good' }]
+        });
+        imageUrl = uploadResult.secure_url;
+      } catch (uploadError) {
+        console.error('Cloudinary upload failed:', uploadError.message);
+        // Continue without image URL
+      }
+    }
+
+    const receipt = new Receipt({
+      operator: operatorId,
+      tricycle: tricycleId || null,
+      vendorName: vendorName || '',
+      receiptDate: receiptDate ? new Date(receiptDate) : new Date(),
+      totalAmount: parseFloat(totalAmount) || 0,
+      subtotal: subtotal ? parseFloat(subtotal) : null,
+      tax: tax ? parseFloat(tax) : null,
+      items: items || [],
+      category: category || 'other',
+      rawOcrText: rawOcrText || '',
+      ocrLines: ocrLines || [],
+      imageUrl,
+      notes: notes || '',
+      ocrEngine: ocrEngine || 'unknown'
+    });
+
+    await receipt.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Receipt saved successfully',
+      data: receipt
+    });
+  } catch (error) {
+    console.error('Error saving receipt:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to save receipt', error: error.message });
+  }
+};
+
+// Get all receipts for operator
+export const getReceipts = async (req, res) => {
+  try {
+    const operatorId = req.user._id;
+    const { category, tricycleId, startDate, endDate, page = 1, limit = 20 } = req.query;
+
+    const filter = { operator: operatorId };
+    
+    if (category && category !== 'all') {
+      filter.category = category;
+    }
+    if (tricycleId) {
+      filter.tricycle = tricycleId;
+    }
+    if (startDate || endDate) {
+      filter.receiptDate = {};
+      if (startDate) filter.receiptDate.$gte = new Date(startDate);
+      if (endDate) filter.receiptDate.$lte = new Date(endDate);
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const [receipts, total] = await Promise.all([
+      Receipt.find(filter)
+        .populate('tricycle', 'plateNumber')
+        .sort({ scanDate: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      Receipt.countDocuments(filter)
+    ]);
+
+    // Calculate totals by category
+    const categoryTotals = await Receipt.aggregate([
+      { $match: { operator: operatorId } },
+      { 
+        $group: { 
+          _id: '$category', 
+          total: { $sum: '$totalAmount' },
+          count: { $sum: 1 }
+        } 
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: receipts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      },
+      categoryTotals: categoryTotals.reduce((acc, curr) => {
+        acc[curr._id] = { total: curr.total, count: curr.count };
+        return acc;
+      }, {})
+    });
+  } catch (error) {
+    console.error('Error fetching receipts:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch receipts', error: error.message });
+  }
+};
+
+// Get single receipt by ID
+export const getReceiptById = async (req, res) => {
+  try {
+    const { receiptId } = req.params;
+    const operatorId = req.user._id;
+
+    const receipt = await Receipt.findOne({ _id: receiptId, operator: operatorId })
+      .populate('tricycle', 'plateNumber model')
+      .lean();
+
+    if (!receipt) {
+      return res.status(404).json({ success: false, message: 'Receipt not found' });
+    }
+
+    res.status(200).json({ success: true, data: receipt });
+  } catch (error) {
+    console.error('Error fetching receipt:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch receipt', error: error.message });
+  }
+};
+
+// Update receipt
+export const updateReceipt = async (req, res) => {
+  try {
+    const { receiptId } = req.params;
+    const operatorId = req.user._id;
+    const updates = req.body;
+
+    // Ensure operator owns this receipt
+    const receipt = await Receipt.findOne({ _id: receiptId, operator: operatorId });
+    if (!receipt) {
+      return res.status(404).json({ success: false, message: 'Receipt not found' });
+    }
+
+    // Update allowed fields
+    const allowedUpdates = ['vendorName', 'receiptDate', 'totalAmount', 'subtotal', 'tax', 'items', 'category', 'tricycle', 'notes'];
+    allowedUpdates.forEach(field => {
+      if (updates[field] !== undefined) {
+        receipt[field] = updates[field];
+      }
+    });
+
+    await receipt.save();
+
+    res.status(200).json({ success: true, message: 'Receipt updated', data: receipt });
+  } catch (error) {
+    console.error('Error updating receipt:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to update receipt', error: error.message });
+  }
+};
+
+// Delete receipt
+export const deleteReceipt = async (req, res) => {
+  try {
+    const { receiptId } = req.params;
+    const operatorId = req.user._id;
+
+    const receipt = await Receipt.findOneAndDelete({ _id: receiptId, operator: operatorId });
+    
+    if (!receipt) {
+      return res.status(404).json({ success: false, message: 'Receipt not found' });
+    }
+
+    // Optionally delete from Cloudinary
+    if (receipt.imageUrl) {
+      try {
+        const publicId = receipt.imageUrl.split('/').slice(-2).join('/').replace(/\.[^/.]+$/, '');
+        await cloudinary.uploader.destroy(publicId);
+      } catch (cloudinaryError) {
+        console.warn('Failed to delete image from Cloudinary:', cloudinaryError.message);
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Receipt deleted' });
+  } catch (error) {
+    console.error('Error deleting receipt:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to delete receipt', error: error.message });
+  }
+};
+
+// Get expense summary for operator
+export const getExpenseSummary = async (req, res) => {
+  try {
+    const operatorId = req.user._id;
+    const { startDate, endDate, groupBy = 'category' } = req.query;
+
+    const matchStage = { operator: operatorId };
+    if (startDate || endDate) {
+      matchStage.receiptDate = {};
+      if (startDate) matchStage.receiptDate.$gte = new Date(startDate);
+      if (endDate) matchStage.receiptDate.$lte = new Date(endDate);
+    }
+
+    let groupId;
+    switch (groupBy) {
+      case 'month':
+        groupId = { year: { $year: '$receiptDate' }, month: { $month: '$receiptDate' } };
+        break;
+      case 'tricycle':
+        groupId = '$tricycle';
+        break;
+      case 'category':
+      default:
+        groupId = '$category';
+    }
+
+    const summary = await Receipt.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: groupId,
+          total: { $sum: '$totalAmount' },
+          count: { $sum: 1 },
+          avgAmount: { $avg: '$totalAmount' }
+        }
+      },
+      { $sort: { total: -1 } }
+    ]);
+
+    // Get overall totals
+    const overallTotals = await Receipt.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          grandTotal: { $sum: '$totalAmount' },
+          receiptCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        breakdown: summary,
+        overall: overallTotals[0] || { grandTotal: 0, receiptCount: 0 }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching expense summary:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch expense summary', error: error.message });
+  }
+};
