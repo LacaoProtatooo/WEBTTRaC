@@ -95,7 +95,7 @@ const Home = () => {
             options={{ 
               title: 'Trips',
               tabBarIcon: ({ color, size }) => (
-                <Ionicons name="car-sport-outline" size={size} color={color} />
+                <Ionicons name="bicycle-outline" size={size} color={color} />
               ) 
             }}
           />

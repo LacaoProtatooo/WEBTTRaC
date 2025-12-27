@@ -2,12 +2,14 @@ import { configureStore } from '@reduxjs/toolkit';
 import authReducer from './reducers/authReducer';
 import userReducer from './reducers/userReducer';
 import announcementReducer from './reducers/announcementReducer';
+import driverReducer from './reducers/driverReducer';
 
 const store = configureStore({
   reducer: {
     auth: authReducer,
     user: userReducer,
     announcement: announcementReducer,
+    driver: driverReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

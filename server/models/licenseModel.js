@@ -59,6 +59,10 @@ const licenseSchema = new mongoose.Schema({
   isVerified: {
     type: Boolean,
     default: false,
+  },
+  rejectionReason: {
+    type: String,
+    required: false,
   }
 }, { timestamps: true });
 

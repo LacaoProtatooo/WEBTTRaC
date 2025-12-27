@@ -441,3 +441,269 @@ export const getLicense = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+// ============== ADMIN ENDPOINTS ==============
+
+import User from "../models/userModel.js";
+
+/**
+ * Get all drivers with their license info (Admin only)
+ * GET /api/license/admin/drivers
+ */
+export const getAllDrivers = async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
+        const search = req.query.search || '';
+        const licenseStatus = req.query.licenseStatus; // 'verified', 'pending', 'none', 'expired'
+
+        // Build user query
+        let userQuery = { role: 'driver' };
+        
+        if (search) {
+            userQuery.$or = [
+                { username: { $regex: search, $options: 'i' } },
+                { firstname: { $regex: search, $options: 'i' } },
+                { lastname: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+            ];
+        }
+
+        // Get all drivers
+        const drivers = await User.find(userQuery)
+            .select('-password')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // Get all licenses for these drivers
+        const driverIds = drivers.map(d => d._id);
+        const licenses = await License.find({ userId: { $in: driverIds } }).lean();
+        
+        // Create a map of userId -> license
+        const licenseMap = {};
+        licenses.forEach(lic => {
+            licenseMap[lic.userId.toString()] = lic;
+        });
+
+        // Attach license info to each driver
+        let driversWithLicense = drivers.map(driver => {
+            const license = licenseMap[driver._id.toString()] || null;
+            let licenseStatusValue = 'none';
+            
+            if (license) {
+                if (license.isVerified) {
+                    // Check if expired
+                    if (license.expiryDate && new Date(license.expiryDate) < new Date()) {
+                        licenseStatusValue = 'expired';
+                    } else {
+                        licenseStatusValue = 'verified';
+                    }
+                } else {
+                    licenseStatusValue = 'pending';
+                }
+            }
+
+            return {
+                ...driver,
+                license,
+                licenseStatus: licenseStatusValue,
+            };
+        });
+
+        // Filter by license status if specified
+        if (licenseStatus) {
+            driversWithLicense = driversWithLicense.filter(d => d.licenseStatus === licenseStatus);
+        }
+
+        // Paginate
+        const total = driversWithLicense.length;
+        const paginatedDrivers = driversWithLicense.slice(skip, skip + limit);
+
+        res.status(200).json({
+            success: true,
+            drivers: paginatedDrivers,
+            total,
+            page,
+            pages: Math.ceil(total / limit),
+        });
+    } catch (error) {
+        console.error("Get All Drivers Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Get single driver details with full license info (Admin only)
+ * GET /api/license/admin/drivers/:driverId
+ */
+export const getDriverDetails = async (req, res) => {
+    try {
+        const { driverId } = req.params;
+
+        const driver = await User.findById(driverId).select('-password').lean();
+        if (!driver || driver.role !== 'driver') {
+            return res.status(404).json({ success: false, message: "Driver not found" });
+        }
+
+        const license = await License.findOne({ userId: driverId }).lean();
+        
+        let licenseStatus = 'none';
+        if (license) {
+            if (license.isVerified) {
+                if (license.expiryDate && new Date(license.expiryDate) < new Date()) {
+                    licenseStatus = 'expired';
+                } else {
+                    licenseStatus = 'verified';
+                }
+            } else {
+                licenseStatus = 'pending';
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            driver: {
+                ...driver,
+                license,
+                licenseStatus,
+            },
+        });
+    } catch (error) {
+        console.error("Get Driver Details Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Verify a driver's license (Admin only)
+ * PUT /api/license/admin/verify/:licenseId
+ */
+export const verifyLicense = async (req, res) => {
+    try {
+        const { licenseId } = req.params;
+
+        const license = await License.findById(licenseId);
+        if (!license) {
+            return res.status(404).json({ success: false, message: "License not found" });
+        }
+
+        license.isVerified = true;
+        await license.save();
+
+        // Get driver info
+        const driver = await User.findById(license.userId).select('-password').lean();
+
+        res.status(200).json({
+            success: true,
+            message: "License verified successfully",
+            license,
+            driver,
+        });
+    } catch (error) {
+        console.error("Verify License Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Reject/Unverify a driver's license (Admin only)
+ * PUT /api/license/admin/reject/:licenseId
+ */
+export const rejectLicense = async (req, res) => {
+    try {
+        const { licenseId } = req.params;
+        const { reason } = req.body;
+
+        const license = await License.findById(licenseId);
+        if (!license) {
+            return res.status(404).json({ success: false, message: "License not found" });
+        }
+
+        license.isVerified = false;
+        if (reason) {
+            license.rejectionReason = reason;
+        }
+        await license.save();
+
+        // Get driver info
+        const driver = await User.findById(license.userId).select('-password').lean();
+
+        res.status(200).json({
+            success: true,
+            message: "License rejected/unverified",
+            license,
+            driver,
+        });
+    } catch (error) {
+        console.error("Reject License Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Delete a license (Admin only)
+ * DELETE /api/license/admin/:licenseId
+ */
+export const deleteLicense = async (req, res) => {
+    try {
+        const { licenseId } = req.params;
+
+        const license = await License.findByIdAndDelete(licenseId);
+        if (!license) {
+            return res.status(404).json({ success: false, message: "License not found" });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "License deleted successfully",
+        });
+    } catch (error) {
+        console.error("Delete License Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Get license statistics (Admin dashboard)
+ * GET /api/license/admin/stats
+ */
+export const getLicenseStats = async (req, res) => {
+    try {
+        const totalDrivers = await User.countDocuments({ role: 'driver' });
+        const allLicenses = await License.find().lean();
+        
+        let verified = 0;
+        let pending = 0;
+        let expired = 0;
+        const now = new Date();
+
+        allLicenses.forEach(lic => {
+            if (lic.isVerified) {
+                if (lic.expiryDate && new Date(lic.expiryDate) < now) {
+                    expired++;
+                } else {
+                    verified++;
+                }
+            } else {
+                pending++;
+            }
+        });
+
+        const noLicense = totalDrivers - allLicenses.length;
+
+        res.status(200).json({
+            success: true,
+            stats: {
+                totalDrivers,
+                verified,
+                pending,
+                expired,
+                noLicense,
+            },
+        });
+    } catch (error) {
+        console.error("Get License Stats Error:", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

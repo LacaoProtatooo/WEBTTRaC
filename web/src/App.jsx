@@ -10,6 +10,7 @@ import SignIn from "./pages/AuthPages/SignIn";
 import SignUp from "./pages/AuthPages/SignUp";
 import NotFound from "./pages/OtherPage/NotFound";
 import UserProfiles from "./pages/UserProfiles";
+import Drivers from "./pages/Drivers";
 import Videos from "./pages/UiElements/Videos";
 import Images from "./pages/UiElements/Images";
 import Alerts from "./pages/UiElements/Alerts";
@@ -47,6 +48,7 @@ export default function App() {
 
               {/* Other Pages */}
               <Route path="/profile" element={<UserProfiles />} />
+              <Route path="/drivers" element={<Drivers />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/announcements" element={<Announcements />} />
               <Route path="/blank" element={<Blank />} />

@@ -1,56 +1,221 @@
 /**
- * tracking.jsx - Guest GPS Tracking Screen
+ * tracking.jsx - Guest GPS Tracking Screen with Trip Recording
  *
- * Shows current location, speed, and basic tracking info for guests
+ * Features:
+ * - Real-time GPS tracking with speed, altitude, heading
+ * - Trip recording with local buffer + MongoDB sync
+ * - Trip history with relive playback
+ * - GPX export via Cloudinary
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, Alert, ScrollView } from 'react-native';
-import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  Alert,
+  FlatList,
+  Modal,
+  ActivityIndicator,
+  Share,
+  Linking,
+} from 'react-native';
+import MapView, { Marker, Polyline, Circle, PROVIDER_GOOGLE, AnimatedRegion } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as Application from 'expo-application';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import axios from 'axios';
+import Constants from 'expo-constants';
 
 import { colors, spacing } from '../../components/common/theme';
 
-// Taguig City coordinates
-const TAGUIG_CENTER = { latitude: 14.5176, longitude: 121.0509 };
+const BASE_URL = Constants.expoConfig?.extra?.BACKEND_URL || 'http://192.168.254.105:5000';
+
+// Storage keys
+const DEVICE_ID_KEY = 'tracking_device_id_v1';
+const ACTIVE_TRIP_KEY = 'tracking_active_trip_v1';
+
+// Sync settings
+const SYNC_INTERVAL_MS = 30000; // Sync every 30 seconds
+const SYNC_BATCH_SIZE = 50; // Min coordinates before sync
+
+// Haversine distance calculation
+function haversineMeters(a, b) {
+  if (!a || !b) return 0;
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371000;
+  const φ1 = toRad(a.latitude), φ2 = toRad(b.latitude);
+  const Δφ = toRad(b.latitude - a.latitude);
+  const Δλ = toRad(b.longitude - a.longitude);
+  const aa = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+  return R * c;
+}
+
+// Format duration to readable string
+function formatDuration(seconds) {
+  if (!seconds) return '0:00';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(secs).padStart(2, '0')}`;
+}
+
+// Format date for display
+function formatDate(dateStr) {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 const GuestTracking = () => {
   const mapRef = useRef(null);
   const watchRef = useRef(null);
-  
+  const syncIntervalRef = useRef(null);
+  const reliveAnimRef = useRef(null);
+
+  // Location state
   const [region, setRegion] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [speedKph, setSpeedKph] = useState(0);
   const [altitude, setAltitude] = useState(0);
   const [accuracy, setAccuracy] = useState(0);
   const [heading, setHeading] = useState(0);
-  const [isTracking, setIsTracking] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
 
-  useEffect(() => {
-    requestPermissionAndStart();
+  // Trip recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [activeTripId, setActiveTripId] = useState(null);
+  const [recordedPositions, setRecordedPositions] = useState([]);
+  const [tripDistance, setTripDistance] = useState(0);
+  const [tripDuration, setTripDuration] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [deviceId, setDeviceId] = useState(null);
 
-    return () => {
-      stopTracking();
-    };
+  // Trip history state
+  const [showHistory, setShowHistory] = useState(false);
+  const [tripHistory, setTripHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Relive state
+  const [reliveTrip, setReliveTrip] = useState(null);
+  const [reliveActive, setReliveActive] = useState(false);
+  const [reliveIndex, setReliveIndex] = useState(0);
+  const [relivePaused, setRelivePaused] = useState(false);
+  const reliveMarker = useRef(new AnimatedRegion({ latitude: 0, longitude: 0 })).current;
+  const relivePausedRef = useRef(false);
+
+  // Export state
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Map type state
+  const [mapType, setMapType] = useState('hybrid');
+
+  // Refs for current values in callbacks
+  const recordedPosRef = useRef([]);
+  const lastPosRef = useRef(null);
+  const tripStartRef = useRef(null);
+  const distanceRef = useRef(0);
+  const activeTripIdRef = useRef(null);
+
+  // Initialize device ID and check for active trip
+  useEffect(() => {
+    initializeTracking();
+    return () => cleanup();
   }, []);
+
+  // Update trip duration while recording
+  useEffect(() => {
+    let interval;
+    if (isRecording && tripStartRef.current) {
+      interval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - tripStartRef.current) / 1000);
+        setTripDuration(elapsed);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  // Sync relivePaused to ref
+  useEffect(() => {
+    relivePausedRef.current = relivePaused;
+  }, [relivePaused]);
+
+  const initializeTracking = async () => {
+    try {
+      // Get or create device ID
+      let storedDeviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+      if (!storedDeviceId) {
+        const appId = Application.applicationId || 'tricyclemod';
+        storedDeviceId = `device_${appId}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        await AsyncStorage.setItem(DEVICE_ID_KEY, storedDeviceId);
+      }
+      setDeviceId(storedDeviceId);
+
+      // Check for active trip
+      const activeTripData = await AsyncStorage.getItem(ACTIVE_TRIP_KEY);
+      if (activeTripData) {
+        const { tripId, startTime, positions } = JSON.parse(activeTripData);
+        setActiveTripId(tripId);
+        activeTripIdRef.current = tripId;
+        setIsRecording(true);
+        tripStartRef.current = startTime;
+        recordedPosRef.current = positions || [];
+        setRecordedPositions(positions || []);
+
+        // Recalculate distance
+        let dist = 0;
+        for (let i = 1; i < positions?.length; i++) {
+          dist += haversineMeters(positions[i - 1], positions[i]);
+        }
+        distanceRef.current = dist;
+        setTripDistance(dist);
+
+        // Resume location watching
+        await resumeLocationWatching();
+      }
+
+      // Request permission and start
+      await requestPermissionAndStart();
+    } catch (error) {
+      console.error('Error initializing tracking:', error);
+    }
+  };
+
+  const cleanup = () => {
+    if (watchRef.current) {
+      watchRef.current.remove();
+      watchRef.current = null;
+    }
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+    if (reliveAnimRef.current) {
+      clearTimeout(reliveAnimRef.current);
+    }
+  };
 
   const requestPermissionAndStart = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Location permission is required for GPS tracking'
-        );
+        Alert.alert('Permission Required', 'Location permission is required for GPS tracking');
         return;
       }
 
       setHasPermission(true);
 
-      // Get initial location
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
@@ -66,89 +231,528 @@ const GuestTracking = () => {
       setRegion(initialRegion);
       setCurrentLocation({ latitude, longitude });
       updateLocationData(location);
-
     } catch (error) {
       console.error('Error getting location:', error);
       Alert.alert('Error', 'Unable to get your location');
     }
   };
 
+  const resumeLocationWatching = async () => {
+    try {
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 1000,
+          distanceInterval: 2,
+        },
+        handleLocationUpdate
+      );
+
+      watchRef.current = subscription;
+
+      // Start sync interval
+      syncIntervalRef.current = setInterval(syncToServer, SYNC_INTERVAL_MS);
+    } catch (error) {
+      console.error('Error resuming location watching:', error);
+    }
+  };
+
   const updateLocationData = (location) => {
     const { speed, altitude, accuracy, heading } = location.coords;
-    
-    // Convert speed from m/s to km/h
-    const kph = (typeof speed === 'number' && !isNaN(speed)) ? speed * 3.6 : 0;
+    const kph = (typeof speed === 'number' && !isNaN(speed)) ? Math.max(0, speed * 3.6) : 0;
     setSpeedKph(Math.round(kph * 10) / 10);
-    
     setAltitude(altitude ? Math.round(altitude * 10) / 10 : 0);
     setAccuracy(accuracy ? Math.round(accuracy * 10) / 10 : 0);
     setHeading(heading ? Math.round(heading) : 0);
   };
 
-  const startTracking = async () => {
+  // ============== TRIP RECORDING ==============
+
+  const startRecording = async () => {
     if (!hasPermission) {
       await requestPermissionAndStart();
       return;
     }
 
-    if (isTracking) {
-      Alert.alert('Tracking', 'GPS tracking is already active');
+    if (isRecording) {
+      Alert.alert('Recording', 'Trip recording is already active');
       return;
     }
 
     try {
+      // Get current location for initial coordinate
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation,
+      });
+
+      const initialCoord = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        altitude: location.coords.altitude || 0,
+        accuracy: location.coords.accuracy || 0,
+        speed: location.coords.speed || 0,
+        heading: location.coords.heading || 0,
+        timestamp: Date.now(),
+      };
+
+      // Start trip on server
+      const response = await axios.post(`${BASE_URL}/api/tracking/start`, {
+        deviceId,
+        name: `Trip ${new Date().toLocaleDateString()}`,
+        initialCoordinate: initialCoord,
+      });
+
+      if (!response.data.success) {
+        throw new Error(response.data.message);
+      }
+
+      const { tripId, startTime } = response.data;
+
+      // Initialize recording state
+      setActiveTripId(tripId);
+      activeTripIdRef.current = tripId;
+      setIsRecording(true);
+      tripStartRef.current = new Date(startTime).getTime();
+      recordedPosRef.current = [initialCoord];
+      lastPosRef.current = initialCoord;
+      distanceRef.current = 0;
+      setRecordedPositions([initialCoord]);
+      setTripDistance(0);
+      setTripDuration(0);
+
+      // Save to AsyncStorage for persistence
+      await AsyncStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify({
+        tripId,
+        startTime: tripStartRef.current,
+        positions: [initialCoord],
+      }));
+
+      // Start location watching
       const subscription = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 1000, // Update every second
-          distanceInterval: 1, // Update every meter
+          timeInterval: 1000,
+          distanceInterval: 2,
         },
-        (location) => {
-          const { latitude, longitude } = location.coords;
-          
-          setCurrentLocation({ latitude, longitude });
-          updateLocationData(location);
-
-          // Center map on current location
-          if (mapRef.current) {
-            mapRef.current.animateCamera(
-              {
-                center: { latitude, longitude },
-              },
-              { duration: 300 }
-            );
-          }
-        }
+        handleLocationUpdate
       );
 
       watchRef.current = subscription;
-      setIsTracking(true);
-      Alert.alert('GPS Tracking', 'Tracking started successfully');
+
+      // Start sync interval
+      syncIntervalRef.current = setInterval(syncToServer, SYNC_INTERVAL_MS);
+
+      Alert.alert('Recording Started', 'Your trip is being recorded');
     } catch (error) {
-      console.error('Error starting tracking:', error);
-      Alert.alert('Error', 'Failed to start GPS tracking');
+      console.error('Error starting recording:', error);
+      Alert.alert('Error', error.message || 'Failed to start recording');
     }
   };
 
-  const stopTracking = () => {
-    if (watchRef.current) {
-      watchRef.current.remove();
-      watchRef.current = null;
-      setIsTracking(false);
-    }
-  };
+  const handleLocationUpdate = useCallback((location) => {
+    const { latitude, longitude, altitude, accuracy, speed, heading } = location.coords;
 
-  const centerOnLocation = () => {
-    if (currentLocation && mapRef.current) {
+    setCurrentLocation({ latitude, longitude });
+    updateLocationData(location);
+
+    // Center map
+    if (mapRef.current) {
       mapRef.current.animateCamera(
-        {
-          center: currentLocation,
-          zoom: 17,
-        },
-        { duration: 500 }
+        { center: { latitude, longitude } },
+        { duration: 300 }
       );
     }
+
+    // Only record if actively recording
+    if (!activeTripIdRef.current) return;
+
+    // Add to recorded positions
+    const newCoord = {
+      latitude,
+      longitude,
+      altitude: altitude || 0,
+      accuracy: accuracy || 0,
+      speed: speed || 0,
+      heading: heading || 0,
+      timestamp: location.timestamp || Date.now(),
+    };
+
+    // Calculate distance from last position
+    if (lastPosRef.current) {
+      const meters = haversineMeters(lastPosRef.current, newCoord);
+      
+      // Filter GPS jitter (ignore if too close or unrealistic jump)
+      if (meters < 1 || meters > 500) {
+        return;
+      }
+      
+      distanceRef.current += meters;
+      setTripDistance(distanceRef.current);
+    }
+
+    lastPosRef.current = newCoord;
+    recordedPosRef.current.push(newCoord);
+    setRecordedPositions([...recordedPosRef.current]);
+
+    // Update AsyncStorage periodically
+    updateLocalStorage();
+  }, []);
+
+  const updateLocalStorage = async () => {
+    try {
+      if (activeTripIdRef.current) {
+        await AsyncStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify({
+          tripId: activeTripIdRef.current,
+          startTime: tripStartRef.current,
+          positions: recordedPosRef.current.slice(-200), // Keep last 200 for memory
+        }));
+      }
+    } catch (error) {
+      console.error('Error updating local storage:', error);
+    }
   };
+
+  const syncToServer = async () => {
+    if (!activeTripIdRef.current || isSyncing) return;
+
+    const coordsToSync = recordedPosRef.current.slice(-SYNC_BATCH_SIZE);
+    if (coordsToSync.length < 5) return;
+
+    setIsSyncing(true);
+    try {
+      await axios.post(`${BASE_URL}/api/tracking/${activeTripIdRef.current}/sync`, {
+        coordinates: coordsToSync,
+      });
+      console.log(`Synced ${coordsToSync.length} coordinates`);
+    } catch (error) {
+      console.error('Sync error:', error.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!isRecording || !activeTripIdRef.current) return;
+
+    Alert.alert(
+      'Stop Recording',
+      'Do you want to save this trip?',
+      [
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: discardTrip,
+        },
+        {
+          text: 'Continue Recording',
+          style: 'cancel',
+        },
+        {
+          text: 'Save Trip',
+          onPress: saveTrip,
+        },
+      ]
+    );
+  };
+
+  const saveTrip = async () => {
+    try {
+      // Stop location watching
+      if (watchRef.current) {
+        watchRef.current.remove();
+        watchRef.current = null;
+      }
+
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
+
+      // Final sync
+      const response = await axios.post(`${BASE_URL}/api/tracking/${activeTripIdRef.current}/end`, {
+        finalCoordinates: recordedPosRef.current,
+      });
+
+      if (response.data.success) {
+        const { trip } = response.data;
+        Alert.alert(
+          'Trip Saved!',
+          `Distance: ${(trip.totalDistance / 1000).toFixed(2)} km\nDuration: ${trip.formattedDuration}`,
+          [{ text: 'OK' }]
+        );
+      }
+
+      // Clear state
+      await AsyncStorage.removeItem(ACTIVE_TRIP_KEY);
+      setIsRecording(false);
+      setActiveTripId(null);
+      activeTripIdRef.current = null;
+      setRecordedPositions([]);
+      setTripDistance(0);
+      setTripDuration(0);
+      recordedPosRef.current = [];
+      lastPosRef.current = null;
+      tripStartRef.current = null;
+      distanceRef.current = 0;
+
+    } catch (error) {
+      console.error('Error saving trip:', error);
+      Alert.alert('Error', 'Failed to save trip. Your data is saved locally.');
+    }
+  };
+
+  const discardTrip = async () => {
+    try {
+      if (watchRef.current) {
+        watchRef.current.remove();
+        watchRef.current = null;
+      }
+
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
+
+      // Cancel on server
+      if (activeTripIdRef.current) {
+        await axios.post(`${BASE_URL}/api/tracking/${activeTripIdRef.current}/cancel`);
+      }
+
+      // Clear state
+      await AsyncStorage.removeItem(ACTIVE_TRIP_KEY);
+      setIsRecording(false);
+      setActiveTripId(null);
+      activeTripIdRef.current = null;
+      setRecordedPositions([]);
+      setTripDistance(0);
+      setTripDuration(0);
+      recordedPosRef.current = [];
+      lastPosRef.current = null;
+      tripStartRef.current = null;
+      distanceRef.current = 0;
+
+      Alert.alert('Discarded', 'Trip recording has been discarded');
+    } catch (error) {
+      console.error('Error discarding trip:', error);
+    }
+  };
+
+  // ============== TRIP HISTORY ==============
+
+  const loadTripHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const response = await axios.get(`${BASE_URL}/api/tracking/history`, {
+        params: { deviceId, limit: 50 },
+      });
+
+      if (response.data.success) {
+        setTripHistory(response.data.trips);
+      }
+    } catch (error) {
+      console.error('Error loading history:', error);
+      Alert.alert('Error', 'Failed to load trip history');
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const openHistory = () => {
+    setShowHistory(true);
+    loadTripHistory();
+  };
+
+  const selectTripForRelive = async (trip) => {
+    try {
+      setShowHistory(false);
+      
+      // Fetch full trip with coordinates
+      const response = await axios.get(`${BASE_URL}/api/tracking/${trip.tripId}`);
+      if (response.data.success && response.data.trip.coordinates.length >= 2) {
+        setReliveTrip(response.data.trip);
+        startRelive(response.data.trip);
+      } else {
+        Alert.alert('Error', 'Trip has insufficient data for playback');
+      }
+    } catch (error) {
+      console.error('Error loading trip for relive:', error);
+      Alert.alert('Error', 'Failed to load trip');
+    }
+  };
+
+  // ============== RELIVE PLAYBACK ==============
+
+  const startRelive = (trip) => {
+    if (!trip || !trip.coordinates || trip.coordinates.length < 2) return;
+
+    const firstCoord = trip.coordinates[0];
+    
+    // Initialize relive marker
+    reliveMarker.setValue({
+      latitude: firstCoord.latitude,
+      longitude: firstCoord.longitude,
+    });
+
+    // Fit map to trip bounds
+    if (mapRef.current) {
+      mapRef.current.fitToCoordinates(
+        trip.coordinates.map(c => ({ latitude: c.latitude, longitude: c.longitude })),
+        {
+          edgePadding: { top: 50, right: 50, bottom: 200, left: 50 },
+          animated: true,
+        }
+      );
+    }
+
+    setReliveActive(true);
+    setReliveIndex(0);
+    setRelivePaused(false);
+    relivePausedRef.current = false;
+    
+    setTimeout(() => {
+      animateRelive(trip, 0);
+    }, 1000);
+  };
+
+  const animateRelive = (trip, index) => {
+    if (index >= trip.coordinates.length - 1) {
+      // Finished
+      setReliveActive(false);
+      setReliveTrip(null);
+      Alert.alert('Relive Complete', 'Trip playback finished');
+      return;
+    }
+
+    if (relivePausedRef.current) return;
+
+    const current = trip.coordinates[index];
+    const next = trip.coordinates[index + 1];
+    
+    // Calculate animation duration based on timestamp difference
+    const timeDiff = next.timestamp && current.timestamp
+      ? Math.abs(new Date(next.timestamp) - new Date(current.timestamp))
+      : 500;
+    const duration = Math.min(Math.max(timeDiff / 10, 100), 1000); // 10x speed, capped
+
+    reliveMarker.timing({
+      latitude: next.latitude,
+      longitude: next.longitude,
+      duration,
+      useNativeDriver: false,
+    }).start();
+
+    // Center map on current position
+    if (mapRef.current) {
+      mapRef.current.animateCamera(
+        { center: { latitude: next.latitude, longitude: next.longitude } },
+        { duration: duration / 2 }
+      );
+    }
+
+    setReliveIndex(index + 1);
+
+    reliveAnimRef.current = setTimeout(() => {
+      animateRelive(trip, index + 1);
+    }, duration);
+  };
+
+  const toggleRelivePause = () => {
+    if (relivePausedRef.current) {
+      setRelivePaused(false);
+      relivePausedRef.current = false;
+      animateRelive(reliveTrip, reliveIndex);
+    } else {
+      setRelivePaused(true);
+      relivePausedRef.current = true;
+      if (reliveAnimRef.current) {
+        clearTimeout(reliveAnimRef.current);
+      }
+    }
+  };
+
+  const stopRelive = () => {
+    if (reliveAnimRef.current) {
+      clearTimeout(reliveAnimRef.current);
+    }
+    setReliveActive(false);
+    setReliveTrip(null);
+    setReliveIndex(0);
+    setRelivePaused(false);
+    relivePausedRef.current = false;
+  };
+
+  // ============== GPX EXPORT ==============
+
+  const exportTripGPX = async (trip) => {
+    setIsExporting(true);
+    try {
+      const response = await axios.post(`${BASE_URL}/api/tracking/${trip.tripId}/export-gpx`);
+      
+      if (response.data.success) {
+        const gpxUrl = response.data.gpxUrl;
+        
+        Alert.alert(
+          'GPX Exported',
+          'Your trip has been exported to GPX format.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Share',
+              onPress: () => Share.share({
+                message: `Check out my trip! Download GPX: ${gpxUrl}`,
+                url: gpxUrl,
+              }),
+            },
+            {
+              text: 'Download',
+              onPress: () => Linking.openURL(gpxUrl),
+            },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Error exporting GPX:', error);
+      Alert.alert('Error', 'Failed to export GPX file');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ============== RENDER ==============
+
+  const renderTripHistoryItem = ({ item }) => (
+    <TouchableOpacity
+      style={styles.historyItem}
+      onPress={() => selectTripForRelive(item)}
+    >
+      <View style={styles.historyItemLeft}>
+        <Ionicons name="navigate-circle" size={32} color={colors.primary} />
+      </View>
+      <View style={styles.historyItemCenter}>
+        <Text style={styles.historyItemTitle}>{item.name || `Trip ${item.tripId.slice(0, 12)}`}</Text>
+        <Text style={styles.historyItemDate}>{formatDate(item.startTime)}</Text>
+        <View style={styles.historyItemStats}>
+          <Text style={styles.historyItemStat}>
+            <Ionicons name="speedometer-outline" size={12} /> {((item.totalDistance || 0) / 1000).toFixed(2)} km
+          </Text>
+          <Text style={styles.historyItemStat}>
+            <Ionicons name="time-outline" size={12} /> {formatDuration(item.duration)}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.historyItemRight}>
+        <TouchableOpacity
+          style={styles.exportBtn}
+          onPress={(e) => {
+            e.stopPropagation();
+            exportTripGPX(item);
+          }}
+        >
+          <Ionicons name="download-outline" size={20} color={colors.primary} />
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -159,16 +763,16 @@ const GuestTracking = () => {
           <View style={styles.headerText}>
             <Text style={styles.headerTitle}>GPS Tracking</Text>
             <Text style={styles.headerSubtitle}>
-              {isTracking ? 'Active' : 'Inactive'}
+              {isRecording ? 'Recording Trip' : reliveActive ? 'Relive Mode' : 'Ready'}
             </Text>
           </View>
         </View>
 
-        <View style={styles.statusIndicator}>
-          <View style={[
-            styles.statusDot,
-            { backgroundColor: isTracking ? '#28a745' : '#6c757d' }
-          ]} />
+        <View style={styles.headerActions}>
+          {isSyncing && <ActivityIndicator size="small" color={colors.primary} />}
+          <TouchableOpacity style={styles.historyBtn} onPress={openHistory}>
+            <Ionicons name="time-outline" size={24} color={colors.primary} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -178,12 +782,14 @@ const GuestTracking = () => {
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={styles.map}
+          mapType={mapType}
           initialRegion={region}
-          showsUserLocation={true}
+          showsUserLocation={!reliveActive}
           showsMyLocationButton={false}
-          followsUserLocation={isTracking}
+          followsUserLocation={isRecording && !reliveActive}
         >
-          {currentLocation && (
+          {/* Current location marker (when not in relive) */}
+          {currentLocation && !reliveActive && (
             <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={styles.locationMarker}>
                 <Ionicons name="navigate" size={20} color="#fff" />
@@ -191,8 +797,39 @@ const GuestTracking = () => {
             </Marker>
           )}
 
+          {/* Recorded path */}
+          {recordedPositions.length > 1 && !reliveActive && (
+            <Polyline
+              coordinates={recordedPositions}
+              strokeColor={colors.primary}
+              strokeWidth={4}
+            />
+          )}
+
+          {/* Relive path */}
+          {reliveTrip && reliveActive && (
+            <>
+              <Polyline
+                coordinates={reliveTrip.coordinates.map(c => ({
+                  latitude: c.latitude,
+                  longitude: c.longitude,
+                }))}
+                strokeColor="#0d6efd"
+                strokeWidth={4}
+              />
+              <Marker.Animated
+                coordinate={reliveMarker}
+                anchor={{ x: 0.5, y: 0.5 }}
+              >
+                <View style={styles.reliveMarker}>
+                  <Ionicons name="bicycle" size={20} color="#fff" />
+                </View>
+              </Marker.Animated>
+            </>
+          )}
+
           {/* Accuracy circle */}
-          {currentLocation && accuracy > 0 && (
+          {currentLocation && accuracy > 0 && !reliveActive && (
             <Circle
               center={currentLocation}
               radius={accuracy}
@@ -203,68 +840,195 @@ const GuestTracking = () => {
         </MapView>
       ) : (
         <View style={styles.loading}>
-          <Ionicons name="location-outline" size={48} color={colors.orangeShade4} />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Getting your location...</Text>
         </View>
       )}
 
+      {/* Recording Info Panel */}
+      {isRecording && (
+        <View style={styles.recordingPanel}>
+          <View style={styles.recordingIndicator}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>Recording</Text>
+          </View>
+          <View style={styles.recordingStats}>
+            <View style={styles.recordingStat}>
+              <Text style={styles.recordingStatValue}>{(tripDistance / 1000).toFixed(2)}</Text>
+              <Text style={styles.recordingStatLabel}>km</Text>
+            </View>
+            <View style={styles.recordingStatDivider} />
+            <View style={styles.recordingStat}>
+              <Text style={styles.recordingStatValue}>{formatDuration(tripDuration)}</Text>
+              <Text style={styles.recordingStatLabel}>duration</Text>
+            </View>
+            <View style={styles.recordingStatDivider} />
+            <View style={styles.recordingStat}>
+              <Text style={styles.recordingStatValue}>{recordedPositions.length}</Text>
+              <Text style={styles.recordingStatLabel}>points</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Relive Controls */}
+      {reliveActive && (
+        <View style={styles.relivePanel}>
+          <Text style={styles.relivePanelTitle}>
+            {reliveTrip?.name || 'Trip Playback'}
+          </Text>
+          <View style={styles.reliveProgress}>
+            <View 
+              style={[
+                styles.reliveProgressFill, 
+                { width: `${(reliveIndex / (reliveTrip?.coordinates?.length || 1)) * 100}%` }
+              ]} 
+            />
+          </View>
+          <View style={styles.reliveControls}>
+            <TouchableOpacity style={styles.reliveControlBtn} onPress={stopRelive}>
+              <Ionicons name="stop" size={24} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.reliveControlBtn} onPress={toggleRelivePause}>
+              <Ionicons name={relivePaused ? 'play' : 'pause'} size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* GPS Info Panel */}
-      <View style={styles.infoPanel}>
-        <View style={styles.infoRow}>
-          <View style={styles.infoCard}>
-            <Ionicons name="speedometer-outline" size={20} color={colors.primary} />
-            <Text style={styles.infoLabel}>Speed</Text>
-            <Text style={styles.infoValue}>{speedKph} km/h</Text>
+      {!reliveActive && (
+        <View style={styles.infoPanel}>
+          <View style={styles.infoRow}>
+            <View style={styles.infoCard}>
+              <Ionicons name="speedometer-outline" size={20} color={colors.primary} />
+              <Text style={styles.infoLabel}>Speed</Text>
+              <Text style={styles.infoValue}>{speedKph} km/h</Text>
+            </View>
+
+            <View style={styles.infoCard}>
+              <Ionicons name="compass-outline" size={20} color={colors.primary} />
+              <Text style={styles.infoLabel}>Heading</Text>
+              <Text style={styles.infoValue}>{heading}°</Text>
+            </View>
           </View>
 
-          <View style={styles.infoCard}>
-            <Ionicons name="compass-outline" size={20} color={colors.primary} />
-            <Text style={styles.infoLabel}>Heading</Text>
-            <Text style={styles.infoValue}>{heading}°</Text>
+          <View style={styles.infoRow}>
+            <View style={styles.infoCard}>
+              <Ionicons name="arrow-up-outline" size={20} color={colors.primary} />
+              <Text style={styles.infoLabel}>Altitude</Text>
+              <Text style={styles.infoValue}>{altitude} m</Text>
+            </View>
+
+            <View style={styles.infoCard}>
+              <Ionicons name="radio-outline" size={20} color={colors.primary} />
+              <Text style={styles.infoLabel}>Accuracy</Text>
+              <Text style={styles.infoValue}>±{accuracy} m</Text>
+            </View>
           </View>
         </View>
-
-        <View style={styles.infoRow}>
-          <View style={styles.infoCard}>
-            <Ionicons name="arrow-up-outline" size={20} color={colors.primary} />
-            <Text style={styles.infoLabel}>Altitude</Text>
-            <Text style={styles.infoValue}>{altitude} m</Text>
-          </View>
-
-          <View style={styles.infoCard}>
-            <Ionicons name="radio-outline" size={20} color={colors.primary} />
-            <Text style={styles.infoLabel}>Accuracy</Text>
-            <Text style={styles.infoValue}>±{accuracy} m</Text>
-          </View>
-        </View>
-      </View>
+      )}
 
       {/* Control Buttons */}
-      <View style={styles.controls}>
-        <TouchableOpacity
-          style={[
-            styles.controlBtn,
-            isTracking && styles.controlBtnActive
-          ]}
-          onPress={isTracking ? stopTracking : startTracking}
-        >
-          <Ionicons
-            name={isTracking ? 'stop-circle-outline' : 'play-circle-outline'}
-            size={24}
-            color="#fff"
-          />
-          <Text style={styles.controlBtnText}>
-            {isTracking ? 'Stop Tracking' : 'Start Tracking'}
-          </Text>
-        </TouchableOpacity>
+      {!reliveActive && (
+        <View style={styles.controls}>
+          <TouchableOpacity
+            style={[
+              styles.controlBtn,
+              isRecording && styles.controlBtnRecording,
+            ]}
+            onPress={isRecording ? stopRecording : startRecording}
+          >
+            <Ionicons
+              name={isRecording ? 'stop-circle-outline' : 'radio-button-on-outline'}
+              size={24}
+              color="#fff"
+            />
+            <Text style={styles.controlBtnText}>
+              {isRecording ? 'Stop Recording' : 'Record Trip'}
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.centerBtn}
-          onPress={centerOnLocation}
-        >
-          <Ionicons name="locate-outline" size={24} color={colors.primary} />
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.centerBtn}
+            onPress={() => {
+              if (currentLocation && mapRef.current) {
+                mapRef.current.animateCamera(
+                  { center: currentLocation, zoom: 17 },
+                  { duration: 500 }
+                );
+              }
+            }}
+          >
+            <Ionicons name="locate-outline" size={24} color={colors.primary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.mapTypeBtn}
+            onPress={() => {
+              setMapType((prev) => {
+                if (prev === 'standard') return 'satellite';
+                if (prev === 'satellite') return 'hybrid';
+                return 'standard';
+              });
+            }}
+          >
+            <Ionicons
+              name={mapType === 'satellite' ? 'earth' : mapType === 'hybrid' ? 'globe' : 'map-outline'}
+              size={24}
+              color={colors.primary}
+            />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Trip History Modal */}
+      <Modal
+        visible={showHistory}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowHistory(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Trip History</Text>
+              <TouchableOpacity onPress={() => setShowHistory(false)}>
+                <Ionicons name="close" size={28} color={colors.orangeShade7} />
+              </TouchableOpacity>
+            </View>
+
+            {loadingHistory ? (
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            ) : tripHistory.length === 0 ? (
+              <View style={styles.modalEmpty}>
+                <Ionicons name="trail-sign-outline" size={64} color={colors.ivory3} />
+                <Text style={styles.modalEmptyText}>No trips recorded yet</Text>
+                <Text style={styles.modalEmptySubtext}>
+                  Start recording to see your trips here
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={tripHistory}
+                renderItem={renderTripHistoryItem}
+                keyExtractor={(item) => item.tripId}
+                contentContainerStyle={styles.historyList}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Export Loading Overlay */}
+      {isExporting && (
+        <View style={styles.exportOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.exportOverlayText}>Exporting GPX...</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -300,14 +1064,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.orangeShade5,
   },
-  statusIndicator: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  historyBtn: {
+    padding: 4,
   },
   map: {
     flex: 1,
@@ -334,6 +1097,112 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 6,
   },
+  reliveMarker: {
+    backgroundColor: '#0d6efd',
+    padding: 10,
+    borderRadius: 25,
+    borderWidth: 3,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  
+  // Recording Panel
+  recordingPanel: {
+    position: 'absolute',
+    top: 80,
+    left: spacing.medium,
+    right: spacing.medium,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 12,
+    padding: spacing.medium,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  recordingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.small,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#dc3545',
+    marginRight: 8,
+  },
+  recordingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#dc3545',
+  },
+  recordingStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  recordingStat: {
+    alignItems: 'center',
+  },
+  recordingStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.orangeShade7,
+  },
+  recordingStatLabel: {
+    fontSize: 11,
+    color: colors.orangeShade5,
+  },
+  recordingStatDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: colors.ivory3,
+  },
+
+  // Relive Panel
+  relivePanel: {
+    position: 'absolute',
+    bottom: 100,
+    left: spacing.medium,
+    right: spacing.medium,
+    backgroundColor: 'rgba(13,110,253,0.95)',
+    borderRadius: 12,
+    padding: spacing.medium,
+  },
+  relivePanelTitle: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  reliveProgress: {
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 2,
+    marginBottom: 12,
+  },
+  reliveProgressFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 2,
+  },
+  reliveControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  reliveControlBtn: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    padding: 12,
+    borderRadius: 30,
+  },
+
+  // Info Panel
   infoPanel: {
     backgroundColor: colors.ivory1,
     paddingHorizontal: spacing.medium,
@@ -367,6 +1236,8 @@ const styles = StyleSheet.create({
     color: colors.orangeShade7,
     marginTop: 2,
   },
+
+  // Controls
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -384,7 +1255,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginRight: spacing.small,
   },
-  controlBtnActive: {
+  controlBtnRecording: {
     backgroundColor: '#dc3545',
   },
   controlBtnText: {
@@ -402,6 +1273,126 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.ivory3,
+  },
+  mapTypeBtn: {
+    backgroundColor: colors.ivory4,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.ivory3,
+    marginLeft: spacing.small,
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.ivory1,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    minHeight: '50%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.large,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ivory3,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.orangeShade7,
+  },
+  modalLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  modalEmpty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  modalEmptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.orangeShade5,
+    marginTop: spacing.medium,
+  },
+  modalEmptySubtext: {
+    fontSize: 14,
+    color: colors.orangeShade4,
+    marginTop: 4,
+  },
+  historyList: {
+    padding: spacing.medium,
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.ivory4,
+    borderRadius: 12,
+    padding: spacing.medium,
+    marginBottom: spacing.small,
+    borderWidth: 1,
+    borderColor: colors.ivory3,
+  },
+  historyItemLeft: {
+    marginRight: spacing.medium,
+  },
+  historyItemCenter: {
+    flex: 1,
+  },
+  historyItemTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.orangeShade7,
+  },
+  historyItemDate: {
+    fontSize: 12,
+    color: colors.orangeShade5,
+    marginTop: 2,
+  },
+  historyItemStats: {
+    flexDirection: 'row',
+    marginTop: 4,
+    gap: 16,
+  },
+  historyItemStat: {
+    fontSize: 12,
+    color: colors.orangeShade6,
+  },
+  historyItemRight: {
+    marginLeft: spacing.small,
+  },
+  exportBtn: {
+    padding: 8,
+    backgroundColor: colors.ivory2,
+    borderRadius: 20,
+  },
+
+  // Export Overlay
+  exportOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  exportOverlayText: {
+    color: '#fff',
+    fontSize: 16,
+    marginTop: spacing.medium,
   },
 });
 

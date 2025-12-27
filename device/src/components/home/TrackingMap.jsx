@@ -72,6 +72,7 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
   const relivePausedRef = useRef(false);
   const reliveSpeedRef = useRef(1);
   const [scrubTooltip, setScrubTooltip] = useState(null);
+  const [mapType, setMapType] = useState('hybrid');
   const progressBarRef = useRef(null);
   const progressBarWidth = useRef(0);
   const insideTerminalRef = useRef(null);
@@ -520,6 +521,7 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={styles.map}
+          mapType={mapType}
           initialRegion={region}
           showsUserLocation
           followsUserLocation={false}
@@ -554,7 +556,7 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
               />
               <Marker coordinate={positions[positions.length - 1]}>
                 <View style={styles.marker}>
-                  <Ionicons name="car-sport-outline" size={20} color="#fff" />
+                  <Ionicons name="bicycle" size={20} color="#fff" />
                 </View>
               </Marker>
             </>
@@ -692,6 +694,23 @@ export default function TrackingMap({ follow = true, onEnterTerminalZone, odomet
         >
           <Ionicons name="locate-outline" size={20} color="#fff" />
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.mapTypeBtn}
+          onPress={() => {
+            setMapType((prev) => {
+              if (prev === 'standard') return 'satellite';
+              if (prev === 'satellite') return 'hybrid';
+              return 'standard';
+            });
+          }}
+        >
+          <Ionicons
+            name={mapType === 'satellite' ? 'earth' : mapType === 'hybrid' ? 'globe' : 'map-outline'}
+            size={20}
+            color="#fff"
+          />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -747,6 +766,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.small,
     bottom: spacing.small,
+    backgroundColor: colors.primary,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapTypeBtn: {
+    position: 'absolute',
+    right: spacing.small,
+    bottom: spacing.small + 52,
     backgroundColor: colors.primary,
     width: 44,
     height: 44,

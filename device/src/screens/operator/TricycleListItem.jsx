@@ -22,7 +22,7 @@ export default function TricycleListItem({
         onPress={() => onDetails(tricycle)}
       >
         <View style={styles.iconWrap}>
-          <Ionicons name="car-sport-outline" size={28} color="#fff" />
+          <Ionicons name="bicycle" size={28} color="#fff" />
         </View>
         <View style={styles.info}>
           <Text style={styles.plate}>{tricycle.plate || tricycle.plateNumber}</Text>

@@ -68,7 +68,7 @@ export default function OverviewTab({
         ListEmptyComponent={
           !loading && (
             <EmptyState
-              icon="car-outline"
+              icon="bicycle-outline"
               title="No tricycles yet"
               subtitle="Tap the + button to add a tricycle"
             />
