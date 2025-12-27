@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Dimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
 import { colors, spacing, fonts } from '../../components/common/theme';
 import Constants from 'expo-constants';
 import { getToken } from '../../utils/jwtStorage';
 import { useAsyncSQLiteContext } from '../../utils/asyncSQliteProvider';
 import VehicleDiagnostic, { getWearColor } from './VehicleDiagnostic';
+
+// Key for tracking which notifications have been sent
+const NOTIFIED_ITEMS_KEY = 'maintenance_notified_items_v1';
 
 const BACKEND = (Constants?.expoConfig?.extra?.BACKEND_URL) || (Constants?.manifest?.extra?.BACKEND_URL) || 'http://192.168.254.105:5000';
 const STORAGE_KEY = 'maintenance_data_v1';
@@ -78,6 +82,113 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
 	const [data, setData] = useState({}); // { itemKey: lastServiceKm }
 	const [loaded, setLoaded] = useState(false);
 	const [odometerKm, setOdometerKm] = useState(null);
+	const [notifiedItems, setNotifiedItems] = useState({}); // Track which items have been notified
+	const hasCheckedNotifications = useRef(false);
+
+	// Setup notification channel for maintenance alerts
+	useEffect(() => {
+		const setupNotificationChannel = async () => {
+			await Notifications.setNotificationChannelAsync('maintenance', {
+				name: 'Maintenance Alerts',
+				description: 'Reminders for critical vehicle maintenance',
+				importance: Notifications.AndroidImportance.HIGH,
+				sound: 'default',
+				vibrationPattern: [0, 250, 250, 250],
+				lightColor: '#FF6B35',
+				showBadge: true,
+			});
+		};
+		setupNotificationChannel();
+		
+		// Load previously notified items
+		const loadNotifiedItems = async () => {
+			try {
+				const key = tricycleId ? `${NOTIFIED_ITEMS_KEY}_${tricycleId}` : NOTIFIED_ITEMS_KEY;
+				const saved = await AsyncStorage.getItem(key);
+				if (saved) {
+					setNotifiedItems(JSON.parse(saved));
+				}
+			} catch (e) {
+				console.warn('Error loading notified items:', e);
+			}
+		};
+		loadNotifiedItems();
+	}, [tricycleId]);
+
+	// Check for critical items and send notifications
+	const checkAndNotifyCriticalItems = async (maintenanceData, currentOdometer) => {
+		if (!maintenanceData || currentOdometer === null) return;
+		
+		const criticalItems = [];
+		const wornItems = [];
+		const newNotifiedItems = { ...notifiedItems };
+		
+		defaultSchedule.forEach(group => {
+			group.items.forEach(item => {
+				const lastKm = maintenanceData[item.key] || 0;
+				const diff = Math.max(0, currentOdometer - lastKm);
+				const progress = Math.min(100, Math.round((diff / group.intervalKm) * 100));
+				
+				// Create a unique key for this notification cycle
+				const notifyKey = `${item.key}_${lastKm}`;
+				
+				if (progress >= 80 && !newNotifiedItems[notifyKey]) {
+					criticalItems.push({ ...item, progress, group: group.title });
+					newNotifiedItems[notifyKey] = Date.now();
+				} else if (progress >= 60 && progress < 80 && !newNotifiedItems[`worn_${notifyKey}`]) {
+					wornItems.push({ ...item, progress, group: group.title });
+					newNotifiedItems[`worn_${notifyKey}`] = Date.now();
+				}
+			});
+		});
+		
+		// Send notification for critical items
+		if (criticalItems.length > 0) {
+			const itemNames = criticalItems.map(i => i.name).join(', ');
+			await Notifications.scheduleNotificationAsync({
+				content: {
+					title: '🚨 Critical Maintenance Required!',
+					body: `The following items need immediate attention: ${itemNames}`,
+					data: { type: 'maintenance', items: criticalItems },
+					sound: 'default',
+				},
+				trigger: null, // Send immediately
+			});
+		}
+		
+		// Send notification for worn items (approaching critical)
+		if (wornItems.length > 0) {
+			const itemNames = wornItems.map(i => i.name).join(', ');
+			await Notifications.scheduleNotificationAsync({
+				content: {
+					title: '⚠️ Maintenance Reminder',
+					body: `These items are approaching maintenance due: ${itemNames}`,
+					data: { type: 'maintenance', items: wornItems },
+					sound: 'default',
+				},
+				trigger: null,
+			});
+		}
+		
+		// Save notified items to prevent duplicate notifications
+		if (criticalItems.length > 0 || wornItems.length > 0) {
+			setNotifiedItems(newNotifiedItems);
+			try {
+				const key = tricycleId ? `${NOTIFIED_ITEMS_KEY}_${tricycleId}` : NOTIFIED_ITEMS_KEY;
+				await AsyncStorage.setItem(key, JSON.stringify(newNotifiedItems));
+			} catch (e) {
+				console.warn('Error saving notified items:', e);
+			}
+		}
+	};
+
+	// Check notifications when data and odometer are loaded
+	useEffect(() => {
+		if (loaded && odometerKm !== null && !hasCheckedNotifications.current) {
+			hasCheckedNotifications.current = true;
+			checkAndNotifyCriticalItems(data, odometerKm);
+		}
+	}, [loaded, odometerKm, data]);
 
 	useEffect(() => {
         loadData();
@@ -182,6 +293,18 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
             // Sync to server
             await saveToServer(itemKey, kmNum, "Completed via app");
 			
+			// Clear the notification flag for this item so it can notify again in the next cycle
+			const notifyKey = tricycleId ? `${NOTIFIED_ITEMS_KEY}_${tricycleId}` : NOTIFIED_ITEMS_KEY;
+			const updatedNotified = { ...notifiedItems };
+			// Remove old notification keys for this item
+			Object.keys(updatedNotified).forEach(k => {
+				if (k.includes(itemKey)) {
+					delete updatedNotified[k];
+				}
+			});
+			setNotifiedItems(updatedNotified);
+			await AsyncStorage.setItem(notifyKey, JSON.stringify(updatedNotified));
+			
 			Alert.alert('Success', `${itemKey.replace(/_/g, ' ')} marked as maintained at ${kmNum} km`);
 		} catch (e) {
 			console.warn('markDone error', e);
@@ -198,6 +321,9 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
 	
 	// Build parts status for blueprint
 	const partsStatus = {};
+	let criticalCount = 0;
+	let wornCount = 0;
+	
 	defaultSchedule.forEach(group => {
 		group.items.forEach(item => {
 			const last = data[item.key] || 0;
@@ -208,8 +334,26 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
 				nextService: last + group.intervalKm,
 				name: item.name
 			};
+			
+			if (progress >= 80) criticalCount++;
+			else if (progress >= 60) wornCount++;
 		});
 	});
+
+	// Manual check for critical items notification
+	const handleCheckCritical = async () => {
+		hasCheckedNotifications.current = false;
+		await checkAndNotifyCriticalItems(data, odometerKm);
+		
+		if (criticalCount === 0 && wornCount === 0) {
+			Alert.alert('All Good! ✅', 'No critical or worn maintenance items at this time.');
+		} else {
+			Alert.alert(
+				'Maintenance Status',
+				`${criticalCount} critical item(s) and ${wornCount} worn item(s) found. Notifications sent.`
+			);
+		}
+	};
 
 	if (!loaded) return null;
 
@@ -222,6 +366,32 @@ const MaintenanceTracker = ({ tricycleId, serverHistory }) => {
                 <Text style={styles.odometerLabel}>Odometer</Text>
                 <Text style={styles.odometerValue}>{odometerKm !== null ? `${odometerKm.toFixed(3)} km` : '—'}</Text>
             </View>
+
+			{/* Critical/Worn Summary Banner */}
+			{(criticalCount > 0 || wornCount > 0) && (
+				<View style={[
+					styles.alertBanner, 
+					criticalCount > 0 ? styles.criticalBanner : styles.wornBanner
+				]}>
+					<Ionicons 
+						name={criticalCount > 0 ? "warning" : "alert-circle"} 
+						size={20} 
+						color="#FFF" 
+					/>
+					<Text style={styles.alertText}>
+						{criticalCount > 0 
+							? `${criticalCount} item(s) need immediate attention!`
+							: `${wornCount} item(s) approaching maintenance due`
+						}
+					</Text>
+					<TouchableOpacity 
+						style={styles.alertButton}
+						onPress={handleCheckCritical}
+					>
+						<Ionicons name="notifications" size={16} color="#FFF" />
+					</TouchableOpacity>
+				</View>
+			)}
 
             {!tricycleId && (
                 <Text style={{color: 'red', marginBottom: 10, fontSize: 12}}>
@@ -399,6 +569,31 @@ const styles = StyleSheet.create({
 		fontSize: 16,
 		fontWeight: '700',
 		color: colors.orangeShade7,
+	},
+	alertBanner: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		padding: spacing.small,
+		borderRadius: 8,
+		marginBottom: spacing.medium,
+	},
+	criticalBanner: {
+		backgroundColor: '#DC2626',
+	},
+	wornBanner: {
+		backgroundColor: '#F59E0B',
+	},
+	alertText: {
+		flex: 1,
+		color: '#FFF',
+		fontSize: 13,
+		fontWeight: '600',
+		marginLeft: 8,
+	},
+	alertButton: {
+		padding: 8,
+		backgroundColor: 'rgba(255,255,255,0.2)',
+		borderRadius: 6,
 	},
 });
 
